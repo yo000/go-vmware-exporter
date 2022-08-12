@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/magiconair/properties"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/performance"
