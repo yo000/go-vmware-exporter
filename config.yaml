@@ -1,0 +1,13 @@
+debug: false
+# Should we scrape VM stats?
+vmstats: true
+
+# List of vmware targets
+hosts:
+  - host: vcenter1.vmware.lan
+    user: username
+    password: mypass
+  - host: vcenter2.vmware.lan
+    user: username
+    password: mypass
+
