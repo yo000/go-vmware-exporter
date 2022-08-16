@@ -3,30 +3,44 @@ package main
 import (
 	"flag"
 	log "github.com/sirupsen/logrus"
-	"github.com/magiconair/properties"
+  "gopkg.in/yaml.v3"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+  "io/ioutil"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 )
 
-type Configuration struct {
-	Host     string
-	User     string
-	Password string
-	Debug    bool
-	vmStats  bool
+type HostConfig struct {
+  Host     string `yaml:"host"`
+  User     string `yaml:"user"`
+  Password string `yaml:"password"`
 }
 
-var cfg Configuration
+type Configuration struct {
+	Hosts    []HostConfig  `yaml:"hosts"`
+	Debug    bool          `yaml:"debug"`
+	vmStats  bool          `yaml:"vmstats"`
+}
 
-var defaultTimeout time.Duration
+var (
+  cfg Configuration
+  cfgFile *string
+  
+  defaultTimeout time.Duration
+)
+
 
 func main() {
 	port := flag.Int("port", 9094, "Port to attach exporter")
+  cfgFile = flag.String("config", "config.yaml", "config file")
 	flag.Parse()
+
+  loadConfig()
+  
+  prometheus.MustRegister(NewvCollector())
 
 	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/", redirect)
@@ -40,30 +54,36 @@ func redirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/metrics", 301)
 }
 
-func init() {
+func loadConfig() {
 
-	defaultTimeout = 30 * time.Second
+  // Some big loaded vcenters take much time to return cluster counters
+	defaultTimeout = 60 * time.Second
 
 	// Get config details
 	if os.Getenv("HOST") != "" && os.Getenv("USERID") != "" && os.Getenv("PASSWORD") != "" {
+    cfg = Configuration{}
+    h := HostConfig{Host: os.Getenv("HOST"), User: os.Getenv("USERID"), Password: os.Getenv("PASSWORD")}
+    cfg.Hosts = append(cfg.Hosts, h)
+    
 		if os.Getenv("DEBUG") == "True" {
-			cfg = Configuration{Host: os.Getenv("HOST"), User: os.Getenv("USERID"), Password: os.Getenv("PASSWORD"), Debug: true}
+      cfg.Debug = true
 		} else {
-			cfg = Configuration{Host: os.Getenv("HOST"), User: os.Getenv("USERID"), Password: os.Getenv("PASSWORD"), Debug: false}
+			cfg.Debug = false
 		}
 		if os.Getenv("VMSTATS") == "False" {
-			cfg = Configuration{Host: os.Getenv("HOST"), User: os.Getenv("USERID"), Password: os.Getenv("PASSWORD"), Debug: true, vmStats: false}
+			cfg.vmStats = false
 		} else {
-			cfg = Configuration{Host: os.Getenv("HOST"), User: os.Getenv("USERID"), Password: os.Getenv("PASSWORD"), Debug: false, vmStats: true}
+			cfg.vmStats = true
 		}
-
 	} else {
-		p := properties.MustLoadFiles([]string{
-			"config.properties",
-		}, properties.UTF8, true)
+    f, err := ioutil.ReadFile(*cfgFile)
+    if err != nil {
+      log.Fatal(err)
+    }
 
-		cfg = Configuration{Host: p.MustGetString("host"), User: p.MustGetString("user"), Password: p.MustGetString("password"), Debug: p.MustGetBool("debug")}
+    err = yaml.Unmarshal(f, &cfg)
+    if err != nil {
+      log.Fatal(err)
+    }
 	}
-
-	prometheus.MustRegister(NewvCollector())
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+  "errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
@@ -15,6 +16,7 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 	"math"
 	"net/url"
+  "reflect"
 	"strings"
 	"time"
 )
@@ -29,24 +31,24 @@ type vMetric struct {
 
 
 // Connect to vCenter
-func NewClient(ctx context.Context) (*govmomi.Client, error) {
+func NewClient(vc HostConfig, ctx context.Context) (*govmomi.Client, error) {
 
-	u, err := url.Parse("https://" + cfg.Host + vim25.Path)
+	u, err := url.Parse("https://" + vc.Host + vim25.Path)
 	if err != nil {
 		log.Fatal(err)
 	}
-	u.User = url.UserPassword(cfg.User, cfg.Password)
-	log.Debug("Connecting to " + u.String())
+	u.User = url.UserPassword(vc.User, vc.Password)
+	log.Debugf("Connecting to %s", u.String())
 
 	return govmomi.NewClient(ctx, u, true)
 }
 
-func DSMetrics() []vMetric {
+func DSMetrics(vc HostConfig) []vMetric {
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	c, err := NewClient(ctx)
+	c, err := NewClient(vc, ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -73,6 +75,7 @@ func DSMetrics() []vMetric {
 	}
 	for _, cls := range lst {
 
+    vcname := vc.Host
 		cname := cls.Name
 		cname = strings.ToLower(cname)
 
@@ -90,11 +93,11 @@ func DSMetrics() []vMetric {
 				ds_uncommitted := ds.Summary.Uncommitted / 1024 / 1024 / 1024
 				ds_name := ds.Summary.Name
 
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_size", help: "Datastore Total Size", value: float64(ds_capacity), labels: map[string]string{"datastore": ds_name, "cluster": cname}})
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_free", help: "Datastore Size Free", value: float64(ds_freespace), labels: map[string]string{"datastore": ds_name, "cluster": cname}})
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_used", help: "Datastore Size Used", value: float64(ds_used), labels: map[string]string{"datastore": ds_name, "cluster": cname}})
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_uncommitted", help: "Datastore Size Uncommitted", value: float64(ds_uncommitted), labels: map[string]string{"datastore": ds_name, "cluster": cname}})
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_pused", help: "Datastore Size", value: ds_pused, labels: map[string]string{"datastore": ds_name, "cluster": cname}})
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_size", help: "Datastore Total Size", value: float64(ds_capacity), labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_free", help: "Datastore Size Free", value: float64(ds_freespace), labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_used", help: "Datastore Size Used", value: float64(ds_used), labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_uncommitted", help: "Datastore Size Uncommitted", value: float64(ds_uncommitted), labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_pused", help: "Datastore Size", value: ds_pused, labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
 			}
 
 		}
@@ -103,12 +106,12 @@ func DSMetrics() []vMetric {
 	return metrics
 }
 
-func ClusterMetrics() []vMetric {
+func ClusterMetrics(vc HostConfig) []vMetric {
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	c, err := NewClient(ctx)
+	c, err := NewClient(vc, ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -148,6 +151,7 @@ func ClusterMetrics() []vMetric {
 				return nil
 			}
 
+      vcname := vc.Host
 			cname := cls.Name()
 			cname = strings.ToLower(cname)
 
@@ -156,44 +160,45 @@ func ClusterMetrics() []vMetric {
 			memLimit := pool.Config.MemoryAllocation.Limit
 
 			// Memory
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_ballooned", help: "Cluster Memory Ballooned", value: float64(qs.BalloonedMemory / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_compressed", help: "The amount of compressed memory currently consumed by VM", value: float64(qs.CompressedMemory / 1024 / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_consumedOverhead", help: "The amount of overhead memory", value: float64(qs.ConsumedOverheadMemory / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_distributedMemoryEntitlement", help: "Cluster Memory ", value: float64(qs.DistributedMemoryEntitlement / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_guest", help: "Guest memory utilization statistics", value: float64(qs.GuestMemoryUsage / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_private", help: "Cluster Memory ", value: float64(qs.PrivateMemory / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_staticMemoryEntitlement", help: "Cluster Memory ", value: float64(qs.StaticMemoryEntitlement / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_shared", help: "Cluster Memory ", value: float64(qs.SharedMemory / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_swapped", help: "Cluster Memory ", value: float64(qs.SwappedMemory / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_limit", help: "Cluster Memory ", value: float64(*memLimit / 1024 / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_usage", help: "Cluster Memory ", value: float64(qs.HostMemoryUsage / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_overhead", help: "Cluster Memory ", value: float64(qs.OverheadMemory / 1024), labels: map[string]string{"cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_ballooned", help: "Cluster Memory Ballooned", value: float64(qs.BalloonedMemory / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_compressed", help: "The amount of compressed memory currently consumed by VM", value: float64(qs.CompressedMemory / 1024 / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_consumedOverhead", help: "The amount of overhead memory", value: float64(qs.ConsumedOverheadMemory / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_distributedMemoryEntitlement", help: "Cluster Memory ", value: float64(qs.DistributedMemoryEntitlement / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_guest", help: "Guest memory utilization statistics", value: float64(qs.GuestMemoryUsage / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_private", help: "Cluster Memory ", value: float64(qs.PrivateMemory / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_staticMemoryEntitlement", help: "Cluster Memory ", value: float64(qs.StaticMemoryEntitlement / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_shared", help: "Cluster Memory ", value: float64(qs.SharedMemory / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_swapped", help: "Cluster Memory ", value: float64(qs.SwappedMemory / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_limit", help: "Cluster Memory ", value: float64(*memLimit / 1024 / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_usage", help: "Cluster Memory ", value: float64(qs.HostMemoryUsage / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_overhead", help: "Cluster Memory ", value: float64(qs.OverheadMemory / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
 
 			// CPU
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_distributedCpuEntitlement", help: "Cluster CPU, MHz ", value: float64(qs.DistributedCpuEntitlement), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_demand", help: "Cluster CPU demand, MHz", value: float64(qs.OverallCpuDemand), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_usage", help: "Cluster CPU usage MHz", value: float64(qs.OverallCpuUsage), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_staticCpuEntitlement", help: "Cluster CPU static, MHz", value: float64(qs.StaticCpuEntitlement), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_limit", help: "Cluster CPU, MHz ", value: float64(*pool.Config.CpuAllocation.Limit), labels: map[string]string{"cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_distributedCpuEntitlement", help: "Cluster CPU, MHz ", value: float64(qs.DistributedCpuEntitlement), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_demand", help: "Cluster CPU demand, MHz", value: float64(qs.OverallCpuDemand), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_usage", help: "Cluster CPU usage MHz", value: float64(qs.OverallCpuUsage), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_staticCpuEntitlement", help: "Cluster CPU static, MHz", value: float64(qs.StaticCpuEntitlement), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_limit", help: "Cluster CPU, MHz ", value: float64(*pool.Config.CpuAllocation.Limit), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
 		}
 	}
 
 	for _, cl := range clusters {
 		if cl.Summary != nil {
+      vcname := vc.Host
 			cname := cl.Name
 			cname = strings.ToLower(cname)
 			qs := cl.Summary.GetComputeResourceSummary()
 
 			// Memory
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_effective", help: "Effective amount of Memory in Cluster", value: float64(qs.EffectiveMemory / 1024), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_total", help: "Total Amount of Memory in Cluster", value: float64(qs.TotalMemory / 1024 / 1024 / 1024), labels: map[string]string{"cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_effective", help: "Effective amount of Memory in Cluster", value: float64(qs.EffectiveMemory / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_total", help: "Total Amount of Memory in Cluster", value: float64(qs.TotalMemory / 1024 / 1024 / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
 
 			// CPU
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_effective", help: "Effective available CPU Hz in Cluster", value: float64(qs.EffectiveCpu), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_total", help: "Total Amount of CPU Hz in Cluster", value: float64(qs.TotalCpu), labels: map[string]string{"cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_effective", help: "Effective available CPU Hz in Cluster", value: float64(qs.EffectiveCpu), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_cpu_total", help: "Total Amount of CPU Hz in Cluster", value: float64(qs.TotalCpu), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
 
 			// Misc
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_numHosts", help: "Number of Hypervisors in cluster", value: float64(qs.NumHosts), labels: map[string]string{"cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_numHosts", help: "Number of Hypervisors in cluster", value: float64(qs.NumHosts), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
 
 			// Virtual Servers, powered on vs created in cluster
 			v, err := m.CreateContainerView(ctx, cl.Reference(), []string{"VirtualMachine"}, true)
@@ -215,8 +220,8 @@ func ClusterMetrics() []vMetric {
 			}
 			total := len(vms)
 
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_vm_poweredon", help: "Number of vms running in cluster", value: float64(poweredOn), labels: map[string]string{"cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_vm_total", help: "Number of vms in cluster", value: float64(total), labels: map[string]string{"cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_vm_poweredon", help: "Number of vms running in cluster", value: float64(poweredOn), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_vm_total", help: "Number of vms in cluster", value: float64(total), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
 
 		}
 
@@ -225,12 +230,12 @@ func ClusterMetrics() []vMetric {
 	return metrics
 }
 
-func ClusterCounters() []vMetric {
+func ClusterCounters(vc HostConfig) []vMetric {
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	c, err := NewClient(ctx)
+	c, err := NewClient(vc, ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -299,7 +304,7 @@ func ClusterCounters() []vMetric {
 				series := baseSeries.(*types.PerfMetricIntSeries)
 				name := strings.TrimLeft(mlist[series.Id.CounterId].Name(), "vmop.")
 				name = strings.TrimRight(name, ".latest")
-				metrics = append(metrics, vMetric{name: "vsphere_cluster_vmop_" + name, help: "vmops counter ", value: float64(series.Value[0]), labels: map[string]string{"cluster": cname}})
+				metrics = append(metrics, vMetric{name: "vsphere_cluster_vmop_" + name, help: "vmops counter ", value: float64(series.Value[0]), labels: map[string]string{"vcenter": vc.Host, "cluster": cname}})
 
 			}
 		}
@@ -309,15 +314,19 @@ func ClusterCounters() []vMetric {
 }
 
 // Collects Hypervisor metrics
-func HostMetrics() []vMetric {
+func HostMetrics(vc HostConfig) []vMetric {
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	c, err := NewClient(ctx)
+	c, err := NewClient(vc, ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
+  
+  if cfg.Debug {
+    log.Debug("DEBUG: NewClient URL: %v\n", c.Client.Client.URL())
+  }
 
 	defer c.Logout(ctx)
 
@@ -342,9 +351,15 @@ func HostMetrics() []vMetric {
 		// Get name of cluster the host is part of
 		cls, err := ClusterFromRef(c, hs.Parent.Reference())
 		if err != nil {
-			log.Error(err.Error())
-			return nil
+      if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
+        log.Error(err.Error())
+        return nil
+      } else {
+        continue
+      }
 		}
+    
+    vcname := vc.Host
 		cname := cls.Name()
 		cname = strings.ToLower(cname)
 
@@ -358,15 +373,15 @@ func HostMetrics() []vMetric {
 		freeMemory := totalMemory - usedMemory
 		memPusage := math.Round((usedMemory / totalMemory) * 100)
 
-		metrics = append(metrics, vMetric{name: "vsphere_host_cpu_usage", help: "Hypervisors CPU usage", value: float64(hs.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_cpu_total", help: "Hypervisors CPU Total", value: float64(totalCPU), labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_cpu_free", help: "Hypervisors CPU Free", value: float64(freeCPU), labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_cpu_pusage", help: "Hypervisors CPU Percent Usage", value: float64(cpuPusage), labels: map[string]string{"host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_cpu_usage", help: "Hypervisors CPU usage", value: float64(hs.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_cpu_total", help: "Hypervisors CPU Total", value: float64(totalCPU), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_cpu_free", help: "Hypervisors CPU Free", value: float64(freeCPU), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_cpu_pusage", help: "Hypervisors CPU Percent Usage", value: float64(cpuPusage), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 
-		metrics = append(metrics, vMetric{name: "vsphere_host_mem_usage", help: "Hypervisors Memory Usage", value: usedMemory, labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_mem_total", help: "Hypervisors Memory Total", value: totalMemory, labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_mem_free", help: "Hypervisors Memory Free", value: float64(freeMemory), labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_mem_pusage", help: "Hypervisors Memory Percent Usage", value: float64(memPusage), labels: map[string]string{"host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_mem_usage", help: "Hypervisors Memory Usage", value: usedMemory, labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_mem_total", help: "Hypervisors Memory Total", value: totalMemory, labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_mem_free", help: "Hypervisors Memory Free", value: float64(freeMemory), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_mem_pusage", help: "Hypervisors Memory Percent Usage", value: float64(memPusage), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 
 	}
 
@@ -374,12 +389,12 @@ func HostMetrics() []vMetric {
 }
 
 // Collects Hypervisor counters
-func HostCounters() []vMetric {
+func HostCounters(vc HostConfig) []vMetric {
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	c, err := NewClient(ctx)
+	c, err := NewClient(vc, ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -407,9 +422,14 @@ func HostCounters() []vMetric {
 		// Get name of cluster the host is part of
 		cls, err := ClusterFromRef(c, hs.Parent.Reference())
 		if err != nil {
-			log.Error(err.Error())
-			return nil
+      if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
+        log.Error(err.Error())
+        return nil
+      } else {
+        continue
+      }
 		}
+    vcname := vc.Host
 		cname := cls.Name()
 		cname = strings.ToLower(cname)
 		name := hs.Summary.Config.Name
@@ -436,8 +456,8 @@ func HostCounters() []vMetric {
 
 		total := len(vms)
 
-		metrics = append(metrics, vMetric{name: "vsphere_host_vm_poweron", help: "Number of vms running on host", value: float64(poweredOn), labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_vm_total", help: "Number of vms registered on host", value: float64(total), labels: map[string]string{"host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_vm_poweron", help: "Number of vms running on host", value: float64(poweredOn), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_vm_total", help: "Number of vms registered on host", value: float64(total), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 
 		var vMem int64
 		var vCPU int64
@@ -461,13 +481,13 @@ func HostCounters() []vMetric {
 			}
 		}
 
-		metrics = append(metrics, vMetric{name: "vsphere_host_vcpu_all", help: "Number of vcpu configured on host", value: float64(vCPU), labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_vmem_all", help: "Total vmem configured on host", value: float64(vMem), labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_vcpu_on", help: "Number of vcpu configured and running on host", value: float64(vCPUOn), labels: map[string]string{"host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_vmem_on", help: "Total vmem configured and running on host", value: float64(vMemOn), labels: map[string]string{"host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_vcpu_all", help: "Number of vcpu configured on host", value: float64(vCPU), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_vmem_all", help: "Total vmem configured on host", value: float64(vMem), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_vcpu_on", help: "Number of vcpu configured and running on host", value: float64(vCPUOn), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_vmem_on", help: "Total vmem configured and running on host", value: float64(vMemOn), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 
 		cores := hs.Summary.Hardware.NumCpuCores
-		metrics = append(metrics, vMetric{name: "vsphere_host_cores", help: "Number of physical cores available on host", value: float64(cores), labels: map[string]string{"host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_cores", help: "Number of physical cores available on host", value: float64(cores), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 
 		vmView.Destroy(ctx)
 	}
@@ -476,12 +496,12 @@ func HostCounters() []vMetric {
 }
 
 // Report status of the HBA attached to a hypervisor to be able to monitor if a hba goes offline
-func HostHBAStatus() []vMetric {
+func HostHBAStatus(vc HostConfig) []vMetric {
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	c, err := NewClient(ctx)
+	c, err := NewClient(vc, ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -512,6 +532,7 @@ func HostHBAStatus() []vMetric {
 			log.Error(err.Error())
 			return nil
 		}
+    vcname := vc.Host
 		cname := cls.Name()
 		cname = strings.ToLower(cname)
 
@@ -538,7 +559,7 @@ func HostHBAStatus() []vMetric {
 				if hba.Status == "online" {
 					status = 1
 				}
-				metrics = append(metrics, vMetric{name: "vsphere_host_hba_status", help: "Hypervisors hba Online status, 1 == Online", value: float64(status), labels: map[string]string{"host": host.Name, "cluster": cname, "hba": hba.Device}})
+				metrics = append(metrics, vMetric{name: "vsphere_host_hba_status", help: "Hypervisors hba Online status, 1 == Online", value: float64(status), labels: map[string]string{"vcenter": vcname, "host": host.Name, "cluster": cname, "hba": hba.Device}})
 			}
 
 		}
@@ -547,12 +568,12 @@ func HostHBAStatus() []vMetric {
 	return metrics
 }
 
-func VmMetrics() []vMetric {
+func VmMetrics(vc HostConfig) []vMetric {
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	c, err := NewClient(ctx)
+	c, err := NewClient(vc, ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -592,17 +613,17 @@ func VmMetrics() []vMetric {
 		GuestMemoryUsage := int64(vm.Summary.QuickStats.GuestMemoryUsage) * 1024 * 1024
 		VmMemory := int64(vm.Config.Hardware.MemoryMB) * 1024 * 1024
 
-		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_total", help: "VM Memory total, Byte", value: float64(VmMemory), labels: map[string]string{"vmname": vm.Name}})
-		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_free", help: "VM Memory total, Byte", value: float64(freeMemory), labels: map[string]string{"vmname": vm.Name}})
-		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_usage", help: "VM Memory usage, Byte", value: float64(GuestMemoryUsage), labels: map[string]string{"vmname": vm.Name}})
-		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_balloonede", help: "VM Memory Ballooned, Byte", value: float64(BalloonedMemory), labels: map[string]string{"vmname": vm.Name}})
+		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_total", help: "VM Memory total, Byte", value: float64(VmMemory), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_free", help: "VM Memory total, Byte", value: float64(freeMemory), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_usage", help: "VM Memory usage, Byte", value: float64(GuestMemoryUsage), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_balloonede", help: "VM Memory Ballooned, Byte", value: float64(BalloonedMemory), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
 
-		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_usage", help: "VM CPU Usage, MHz", value: float64(vm.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"vmname": vm.Name}})
-		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_demand", help: "VM CPU Demand, MHz", value: float64(vm.Summary.QuickStats.OverallCpuDemand), labels: map[string]string{"vmname": vm.Name}})
-		//metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_total", help: "VM CPU Demand, MHz", value: float64(vm.Config), labels: map[string]string{"vmname": vm.Name}})
+		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_usage", help: "VM CPU Usage, MHz", value: float64(vm.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_demand", help: "VM CPU Demand, MHz", value: float64(vm.Summary.QuickStats.OverallCpuDemand), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+		//metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_total", help: "VM CPU Demand, MHz", value: float64(vm.Config), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
 		/*
 			perfMetrics := PerfQuery(ctx,c,[]string{"cpu.ready.summation", "cpu.usage.none"},vm.GetManagedEntity(),metricMap,idToName)
-			metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_ready", help: "VM CPU % Ready", value: float64(perfMetrics["cpu.ready.summation"]), labels: map[string]string{"vmname": vm.Name}})
+			metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_ready", help: "VM CPU % Ready", value: float64(perfMetrics["cpu.ready.summation"]), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
 		*/
 
 	}
@@ -659,6 +680,14 @@ func ClusterFromRef(client *govmomi.Client, ref types.ManagedObjectReference) (*
 	if err != nil {
 		return nil, err
 	}
+  
+  // panic: interface conversion: object.Reference is *object.ComputeResource, not *object.ClusterComputeResource
+  if reflect.TypeOf(obj).Name() != "*object.ClusterComputeResource" {
+    if cfg.Debug {
+      log.Debugf("DEBUG: Not an *object.ClusterComputeResource: %s\n", reflect.TypeOf(obj).Name())
+    }
+    return nil, errors.New("Not an *object.ClusterComputeResource")
+  }
 	return obj.(*object.ClusterComputeResource), nil
 }
 
