@@ -12,7 +12,8 @@ const xver = "1.1"
 
 
 type vCollector struct {
-	desc string
+  desc     string
+  Metrics []vMetric
 }
 
 func timeTrack(start time.Time, name string) {
