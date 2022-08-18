@@ -40,6 +40,10 @@ func main() {
 
   loadConfig()
   
+  if cfg.Debug == true {
+    log.SetLevel(log.DebugLevel)
+  }
+  
   prometheus.MustRegister(NewvCollector())
 
 	http.Handle("/metrics", promhttp.Handler())
