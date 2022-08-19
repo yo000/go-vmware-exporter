@@ -557,8 +557,10 @@ func HostCounters(vc HostConfig) []vMetric {
       value: float64(vMemOn), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 
 		cores := hs.Summary.Hardware.NumCpuCores
+		model := hs.Summary.Hardware.CpuModel
+
 		metrics = append(metrics, vMetric{name: "vsphere_host_cores", mtype: Gauge, help: "Number of physical cores available on host", 
-      value: float64(cores), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+      value: float64(cores), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname, "cpumodel": model}})
 
 		vmView.Destroy(ctx)
 	}
