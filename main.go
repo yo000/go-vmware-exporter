@@ -20,9 +20,10 @@ type HostConfig struct {
 }
 
 type Configuration struct {
-	Hosts    []HostConfig  `yaml:"hosts"`
-	Debug    bool          `yaml:"debug"`
-	vmStats  bool          `yaml:"vmstats"`
+	Hosts         []HostConfig  `yaml:"hosts"`
+	Debug         bool          `yaml:"debug"`
+	vmStats       bool          `yaml:"vmstats"`
+	clusterStats  bool          `yaml:"clusterstats"`
 }
 
 var (

@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const xver = "1.2"
+const xver = "1.3"
 
 
 type vCollector struct {
@@ -69,26 +69,30 @@ func collectVCenter(vc HostConfig) []vMetric {
   }()
 
   // Cluster Metrics
-  wg.Add(1)
-  go func() {
-    defer wg.Done()
-    defer timeTrack(time.Now(), fmt.Sprintf("ClusterMetrics(%s)", vc.Host))
-    cm := ClusterMetrics(vc)
-    mu.Lock()
-    metrics = append(metrics, cm...)
-    mu.Unlock()
-  }()
+  if cfg.clusterStats == true {
+    wg.Add(1)
+    go func() {
+      defer wg.Done()
+      defer timeTrack(time.Now(), fmt.Sprintf("ClusterMetrics(%s)", vc.Host))
+      cm := ClusterMetrics(vc)
+      mu.Lock()
+      metrics = append(metrics, cm...)
+      mu.Unlock()
+    }()
+  }
 
   // Cluster Counters
-  wg.Add(1)
-  go func() {
-    defer wg.Done()
-    defer timeTrack(time.Now(), fmt.Sprintf("ClusterCounters(%s)", vc.Host))
-    cm := ClusterCounters(vc)
-    mu.Lock()
-    metrics = append(metrics, cm...)
-    mu.Unlock()
-  }()
+  if cfg.clusterStats == true {
+    wg.Add(1)
+    go func() {
+      defer wg.Done()
+      defer timeTrack(time.Now(), fmt.Sprintf("ClusterCounters(%s)", vc.Host))
+      cm := ClusterCounters(vc)
+      mu.Lock()
+      metrics = append(metrics, cm...)
+      mu.Unlock()
+    }()
+  }
 
   // Host Metrics
   wg.Add(1)
@@ -171,9 +175,6 @@ func (c *vCollector) CollectMetricsFromVmware() {
 // Automatically called to get the metric values when Prometheus connect to endpoint
 // This function serve the metrics previously collected, then notify collector to start scraping another set of metrics
 func (c *vCollector) Collect(ch chan<- prometheus.Metric) {
-
-  log.Info("Run Collect()")
-
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc("vmware_exporter_version", "go-vmware-export Version", []string{}, prometheus.Labels{"version": xver}),
 		prometheus.GaugeValue,
