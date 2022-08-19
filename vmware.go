@@ -16,7 +16,6 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 	"math"
 	"net/url"
-  "reflect"
 	"strings"
 	"time"
 )
@@ -58,9 +57,14 @@ func DSMetrics(vc HostConfig) []vMetric {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
+	var metrics []vMetric
+
 	c, err := NewClient(vc, ctx)
+	// With multi vcenter support, connection error should not be fatal anymore
 	if err != nil {
-		log.Fatal(err)
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
 	}
 
 	defer c.Logout(ctx)
@@ -70,21 +74,17 @@ func DSMetrics(vc HostConfig) []vMetric {
 	vmgr, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"ClusterComputeResource"}, true)
 	if err != nil {
 		log.Error(err.Error())
-
 	}
 
 	defer vmgr.Destroy(ctx)
-
-	var metrics []vMetric
 
 	var lst []mo.ClusterComputeResource
 	err = vmgr.Retrieve(ctx, []string{"ClusterComputeResource"}, []string{"name", "datastore"}, &lst)
 	if err != nil {
 		log.Error(err.Error())
-
 	}
-	for _, cls := range lst {
 
+	for _, cls := range lst {
     vcname := vc.Host
 		cname := cls.Name
 		cname = strings.ToLower(cname)
@@ -103,15 +103,15 @@ func DSMetrics(vc HostConfig) []vMetric {
 				ds_uncommitted := ds.Summary.Uncommitted / 1024 / 1024 / 1024
 				ds_name := ds.Summary.Name
 
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_size", mtype: Gauge, help: "Datastore Total Size",
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_size", mtype: Gauge, help: "Datastore Total Size in GB",
           value: float64(ds_capacity), labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_free", mtype: Gauge, help: "Datastore Size Free", 
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_free", mtype: Gauge, help: "Datastore Size Free in GB", 
           value: float64(ds_freespace), labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_used", mtype: Gauge, help: "Datastore Size Used", 
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_used", mtype: Gauge, help: "Datastore Size Used in GB", 
           value: float64(ds_used), labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_uncommitted", mtype: Gauge, help: "Datastore Size Uncommitted", 
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_uncommitted", mtype: Gauge, help: "Datastore Size Uncommitted in GB", 
           value: float64(ds_uncommitted), labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
-				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_pused", mtype: Gauge, help: "Datastore Size", 
+				metrics = append(metrics, vMetric{name: "vsphere_datastore_capacity_pused", mtype: Gauge, help: "Datastore Size in percent", 
           value: ds_pused, labels: map[string]string{"vcenter": vcname, "datastore": ds_name, "cluster": cname}})
 			}
 
@@ -126,9 +126,14 @@ func ClusterMetrics(vc HostConfig) []vMetric {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
+	var metrics []vMetric
+
 	c, err := NewClient(vc, ctx)
+	// With multi vcenter support, connection error should not be fatal anymore
 	if err != nil {
-		log.Fatal(err)
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
 	}
 
 	defer c.Logout(ctx)
@@ -154,8 +159,6 @@ func ClusterMetrics(vc HostConfig) []vMetric {
 		log.Error(err.Error())
 		//return err
 	}
-
-	var metrics []vMetric
 
 	for _, pool := range pools {
 		if pool.Summary != nil {
@@ -222,9 +225,9 @@ func ClusterMetrics(vc HostConfig) []vMetric {
 			qs := cl.Summary.GetComputeResourceSummary()
 
 			// Memory
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_effective", mtype: Gauge, help: "Effective amount of Memory in Cluster", 
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_effective", mtype: Gauge, help: "Effective amount of Memory in Cluster in GB", 
         value: float64(qs.EffectiveMemory / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
-			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_total", mtype: Gauge, help: "Total Amount of Memory in Cluster", 
+			metrics = append(metrics, vMetric{name: "vsphere_cluster_mem_total", mtype: Gauge, help: "Total Amount of Memory in Cluster in GB", 
         value: float64(qs.TotalMemory / 1024 / 1024 / 1024), labels: map[string]string{"vcenter": vcname, "cluster": cname}})
 
 			// CPU
@@ -274,9 +277,14 @@ func ClusterCounters(vc HostConfig) []vMetric {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
+	var metrics []vMetric
+
 	c, err := NewClient(vc, ctx)
+	// With multi vcenter support, connection error should not be fatal anymore
 	if err != nil {
-		log.Fatal(err)
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
 	}
 
 	defer c.Logout(ctx)
@@ -305,8 +313,6 @@ func ClusterCounters(vc HostConfig) []vMetric {
 
 	}
 
-	var metrics []vMetric
-
 	for _, cls := range lst {
 		cname := cls.Name
 		cname = strings.ToLower(cname)
@@ -333,8 +339,11 @@ func ClusterCounters(vc HostConfig) []vMetric {
 		}
 
 		response, err := methods.QueryPerf(ctx, c, &query)
+		// With multi vcenter support, connection error should not be fatal anymore
 		if err != nil {
-			log.Fatal(err)
+			//log.Fatal(err)
+			log.Error(err)
+			return metrics
 		}
 
 		for _, base := range response.Returnval {
@@ -359,14 +368,16 @@ func HostMetrics(vc HostConfig) []vMetric {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	c, err := NewClient(vc, ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
+	var metrics []vMetric
+	var cname   string
   
-  if cfg.Debug {
-    log.Debug("DEBUG: NewClient URL: %v\n", c.Client.Client.URL())
-  }
+	c, err := NewClient(vc, ctx)
+	// With multi vcenter support, connection error should not be fatal anymore
+	if err != nil {
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
+	}
 
 	defer c.Logout(ctx)
 
@@ -385,25 +396,24 @@ func HostMetrics(vc HostConfig) []vMetric {
 		log.Error(err.Error())
 	}
 
-	var metrics []vMetric
-
 	for _, hs := range hosts {
-		// Get name of cluster the host is part of
+		// Get name of cluster the host is part of (else use "standalone" as cluster name)
 		cls, err := ClusterFromRef(c, hs.Parent.Reference())
 		if err != nil {
-      if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
-        log.Error(err.Error())
-        return nil
-      } else {
-        continue
-      }
+			if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
+				log.Error(err.Error())
+				return nil
+			} else {
+				cname = "standalone"
+			}
+		} else {
+			cname = cls.Name()
+			cname = strings.ToLower(cname)
 		}
-    
-    vcname := vc.Host
-		cname := cls.Name()
-		cname = strings.ToLower(cname)
 
+		vcname := vc.Host
 		name := hs.Summary.Config.Name
+    
 		totalCPU := int64(hs.Summary.Hardware.CpuMhz) * int64(hs.Summary.Hardware.NumCpuCores)
 		freeCPU := int64(totalCPU) - int64(hs.Summary.QuickStats.OverallCpuUsage)
 		cpuPusage := math.Round((float64(hs.Summary.QuickStats.OverallCpuUsage) / float64(totalCPU)) * 100)
@@ -422,11 +432,11 @@ func HostMetrics(vc HostConfig) []vMetric {
 		metrics = append(metrics, vMetric{name: "vsphere_host_cpu_pusage", mtype: Gauge, help: "Hypervisors CPU Percent Usage", 
       value: float64(cpuPusage), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 
-		metrics = append(metrics, vMetric{name: "vsphere_host_mem_usage", mtype: Gauge, help: "Hypervisors Memory Usage", 
+		metrics = append(metrics, vMetric{name: "vsphere_host_mem_usage", mtype: Gauge, help: "Hypervisors Memory Usage in GB", 
       value: usedMemory, labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_mem_total", mtype: Gauge, help: "Hypervisors Memory Total", 
+		metrics = append(metrics, vMetric{name: "vsphere_host_mem_total", mtype: Gauge, help: "Hypervisors Memory Total in GB", 
       value: totalMemory, labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_mem_free", mtype: Gauge, help: "Hypervisors Memory Free", 
+		metrics = append(metrics, vMetric{name: "vsphere_host_mem_free", mtype: Gauge, help: "Hypervisors Memory Free in GB", 
       value: float64(freeMemory), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 		metrics = append(metrics, vMetric{name: "vsphere_host_mem_pusage", mtype: Gauge, help: "Hypervisors Memory Percent Usage", 
       value: float64(memPusage), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
@@ -441,10 +451,16 @@ func HostCounters(vc HostConfig) []vMetric {
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
+  
+  var metrics []vMetric
+  var cname   string
 
 	c, err := NewClient(vc, ctx)
+  // With multi vcenter support, connection error should not be fatal anymore
 	if err != nil {
-		log.Fatal(err)
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
 	}
 
 	defer c.Logout(ctx)
@@ -464,22 +480,22 @@ func HostCounters(vc HostConfig) []vMetric {
 		log.Error(err.Error() + ": HostCounters")
 	}
 
-	var metrics []vMetric
-
 	for _, hs := range hosts {
 		// Get name of cluster the host is part of
 		cls, err := ClusterFromRef(c, hs.Parent.Reference())
 		if err != nil {
-      if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
-        log.Error(err.Error())
-        return nil
-      } else {
-        continue
-      }
+			if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
+				log.Error(err.Error())
+				return nil
+			} else {
+				cname = "standalone"
+			}
+		} else {
+			cname = cls.Name()
+			cname = strings.ToLower(cname)
 		}
-    vcname := vc.Host
-		cname := cls.Name()
-		cname = strings.ToLower(cname)
+    
+		vcname := vc.Host
 		name := hs.Summary.Config.Name
 
 		vMgr := view.NewManager(c.Client)
@@ -533,11 +549,11 @@ func HostCounters(vc HostConfig) []vMetric {
 
 		metrics = append(metrics, vMetric{name: "vsphere_host_vcpu_all", mtype: Gauge, help: "Number of vcpu configured on host", 
       value: float64(vCPU), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_vmem_all", mtype: Gauge, help: "Total vmem configured on host", 
+		metrics = append(metrics, vMetric{name: "vsphere_host_vmem_all", mtype: Gauge, help: "Total vmem configured on host in GB", 
       value: float64(vMem), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 		metrics = append(metrics, vMetric{name: "vsphere_host_vcpu_on", mtype: Gauge, help: "Number of vcpu configured and running on host", 
       value: float64(vCPUOn), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
-		metrics = append(metrics, vMetric{name: "vsphere_host_vmem_on", mtype: Gauge, help: "Total vmem configured and running on host", 
+		metrics = append(metrics, vMetric{name: "vsphere_host_vmem_on", mtype: Gauge, help: "Total vmem configured and running on host in GB", 
       value: float64(vMemOn), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 
 		cores := hs.Summary.Hardware.NumCpuCores
@@ -555,10 +571,16 @@ func HostHBAStatus(vc HostConfig) []vMetric {
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
+  
+	var metrics []vMetric
+	var cname   string
 
 	c, err := NewClient(vc, ctx)
+	// With multi vcenter support, connection error should not be fatal anymore
 	if err != nil {
-		log.Fatal(err)
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
 	}
 
 	defer c.Logout(ctx)
@@ -577,19 +599,23 @@ func HostHBAStatus(vc HostConfig) []vMetric {
 	if err != nil {
 		log.Error(err.Error())
 	}
-
-	var metrics []vMetric
-
+  
 	for _, host := range hosts {
 		// Get name of cluster the host is part of
 		cls, err := ClusterFromRef(c, host.Parent.Reference())
 		if err != nil {
-			log.Error(err.Error())
-			return nil
+			if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
+				log.Error(err.Error())
+				return nil
+			} else {
+				cname = "standalone"
+			}
+		} else {
+			cname = cls.Name()
+			cname = strings.ToLower(cname)
 		}
-    vcname := vc.Host
-		cname := cls.Name()
-		cname = strings.ToLower(cname)
+
+		vcname := vc.Host
 
 		hcm := object.NewHostConfigManager(c.Client, host.Reference())
 		ss, err := hcm.StorageSystem(ctx)
@@ -629,9 +655,14 @@ func VmMetrics(vc HostConfig) []vMetric {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	var metrics []vMetric
+
 	c, err := NewClient(vc, ctx)
+	// With multi vcenter support, connection error should not be fatal anymore
 	if err != nil {
-		log.Fatal(err)
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
 	}
 
 	defer c.Logout(ctx)
@@ -658,8 +689,6 @@ func VmMetrics(vc HostConfig) []vMetric {
 	for k, v := range metricMap {
 		idToName[v] = k
 	}
-
-	var metrics []vMetric
 
 	for _, vm := range vms {
 
@@ -744,26 +773,29 @@ func ClusterFromRef(client *govmomi.Client, ref types.ManagedObjectReference) (*
 	if err != nil {
 		return nil, err
 	}
-  
-  // panic: interface conversion: object.Reference is *object.ComputeResource, not *object.ClusterComputeResource
-  if reflect.TypeOf(obj).Name() != "*object.ClusterComputeResource" {
-    if cfg.Debug {
-      log.Debugf("DEBUG: Not an *object.ClusterComputeResource: %s\n", reflect.TypeOf(obj).Name())
-    }
-    return nil, errors.New("Not an *object.ClusterComputeResource")
-  }
-	return obj.(*object.ClusterComputeResource), nil
+
+	switch obj.(type) {
+		case *object.ClusterComputeResource:
+			return obj.(*object.ClusterComputeResource), nil
+		default:
+			log.Debugf("This is NOT *object.ClusterComputeResource: %T", obj)
+			return nil, errors.New("Not an *object.ClusterComputeResource")
+	}
+
+	// We wont never reach this
+	return nil, nil
 }
 
 func GetMetricMap(ctx context.Context, client *govmomi.Client) (MetricMap map[string]int32) {
-
+  metricMap := make(map[string]int32)
 	var pM mo.PerformanceManager
 	err := client.RetrieveOne(ctx, *client.ServiceContent.PerfManager, nil, &pM)
+	// With multi vcenter support, connection error should not be fatal anymore
 	if err != nil {
-		log.Fatal(err)
+		//log.Fatal(err)
+		log.Error(err)
+		return metricMap
 	}
-
-	metricMap := make(map[string]int32)
 
 	for _, perfCounterInfo := range pM.PerfCounter {
 		name := perfCounterInfo.GroupInfo.GetElementDescription().Key + "." + perfCounterInfo.NameInfo.GetElementDescription().Key + "." + string(perfCounterInfo.RollupType)
@@ -771,12 +803,16 @@ func GetMetricMap(ctx context.Context, client *govmomi.Client) (MetricMap map[st
 	}
 	return metricMap
 }
-func PerfQuery(ctx context.Context, c *govmomi.Client, metrics []string, entity mo.ManagedEntity, nameToId map[string]int32, idToName map[int32]string) map[string]int64 {
 
+func PerfQuery(ctx context.Context, c *govmomi.Client, metrics []string, entity mo.ManagedEntity, nameToId map[string]int32, idToName map[int32]string) map[string]int64 {
+  data := make(map[string]int64)
 	var pM mo.PerformanceManager
 	err := c.RetrieveOne(ctx, *c.ServiceContent.PerfManager, nil, &pM)
+	// With multi vcenter support, connection error should not be fatal anymore
 	if err != nil {
-		log.Fatal(err)
+		//log.Fatal(err)
+		log.Error(err)
+		return data
 	}
 
 	var pmidList []types.PerfMetricId
@@ -797,11 +833,13 @@ func PerfQuery(ctx context.Context, c *govmomi.Client, metrics []string, entity 
 	}
 
 	response, err := methods.QueryPerf(ctx, c, &query)
+	// With multi vcenter support, connection error should not be fatal anymore
 	if err != nil {
-		log.Fatal(err)
+		//log.Fatal(err)
+		log.Error(err)
+		return data
 	}
 
-	data := make(map[string]int64)
 	for _, base := range response.Returnval {
 		metric := base.(*types.PerfEntityMetric)
 		for _, baseSeries := range metric.Value {
