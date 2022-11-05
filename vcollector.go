@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const xver = "1.4"
+const xver = "1.4.1"
 
 
 type vCollector struct {

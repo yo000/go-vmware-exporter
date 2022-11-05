@@ -52,7 +52,23 @@ func NewClient(vc HostConfig, ctx context.Context) (*govmomi.Client, error) {
 	return govmomi.NewClient(ctx, u, true)
 }
 
+/* v1.4.1 :  Collectors can panic if host suddenly goes offline, like in a network outage.
+    We nneed to recover from this
+panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0xb64ac5]
+
+goroutine 7050870 [running]:
+main.HostCounters({{0xc0000cc3a8, 0x18}, {0xc0000a74d4, 0xb}, {0xc0000cc3c0, 0x14}})
+        /home/yo/Dev/go/go-vmware-exporter/vmware.go:509 +0xd85
+*/
+func recoverCollector() {
+	if r := recover(); r!= nil {
+		log.Errorf("recovered from %v\n", r)
+	}
+}
+
 func DSMetrics(vc HostConfig) []vMetric {
+	defer recoverCollector()
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
@@ -122,6 +138,7 @@ func DSMetrics(vc HostConfig) []vMetric {
 }
 
 func ClusterMetrics(vc HostConfig) []vMetric {
+	defer recoverCollector()
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
@@ -273,6 +290,7 @@ func ClusterMetrics(vc HostConfig) []vMetric {
 }
 
 func ClusterCounters(vc HostConfig) []vMetric {
+	defer recoverCollector()
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
@@ -364,6 +382,7 @@ func ClusterCounters(vc HostConfig) []vMetric {
 
 // Collects Hypervisor metrics
 func HostMetrics(vc HostConfig) []vMetric {
+	defer recoverCollector()
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
@@ -448,6 +467,7 @@ func HostMetrics(vc HostConfig) []vMetric {
 
 // Collects Hypervisor counters
 func HostCounters(vc HostConfig) []vMetric {
+	defer recoverCollector()
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
@@ -570,6 +590,7 @@ func HostCounters(vc HostConfig) []vMetric {
 
 // Report status of the HBA attached to a hypervisor to be able to monitor if a hba goes offline
 func HostHBAStatus(vc HostConfig) []vMetric {
+	defer recoverCollector()
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
@@ -653,6 +674,7 @@ func HostHBAStatus(vc HostConfig) []vMetric {
 }
 
 func VmMetrics(vc HostConfig) []vMetric {
+	defer recoverCollector()
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -727,6 +749,7 @@ func VmMetrics(vc HostConfig) []vMetric {
 }
 
 func GetClusters(ctx context.Context, c *govmomi.Client, lst *[]mo.ClusterComputeResource) error {
+	defer recoverCollector()
 
 	m := view.NewManager(c.Client)
 
@@ -750,6 +773,7 @@ func GetClusters(ctx context.Context, c *govmomi.Client, lst *[]mo.ClusterComput
 // ClusterFromID returns a ClusterComputeResource, a subclass of
 // ComputeResource that is used for clusters.
 func ClusterFromID(client *govmomi.Client, id string) (*object.ClusterComputeResource, error) {
+	defer recoverCollector()
 	finder := find.NewFinder(client.Client, false)
 
 	ref := types.ManagedObjectReference{
@@ -767,6 +791,7 @@ func ClusterFromID(client *govmomi.Client, id string) (*object.ClusterComputeRes
 }
 
 func ClusterFromRef(client *govmomi.Client, ref types.ManagedObjectReference) (*object.ClusterComputeResource, error) {
+	defer recoverCollector()
 	finder := find.NewFinder(client.Client, false)
 
 	ctx, cancel := context.WithTimeout(context.Background(),  2*time.Second)
@@ -789,7 +814,8 @@ func ClusterFromRef(client *govmomi.Client, ref types.ManagedObjectReference) (*
 }
 
 func GetMetricMap(ctx context.Context, client *govmomi.Client) (MetricMap map[string]int32) {
-  metricMap := make(map[string]int32)
+	defer recoverCollector()
+	metricMap := make(map[string]int32)
 	var pM mo.PerformanceManager
 	err := client.RetrieveOne(ctx, *client.ServiceContent.PerfManager, nil, &pM)
 	// With multi vcenter support, connection error should not be fatal anymore
@@ -807,7 +833,8 @@ func GetMetricMap(ctx context.Context, client *govmomi.Client) (MetricMap map[st
 }
 
 func PerfQuery(ctx context.Context, c *govmomi.Client, metrics []string, entity mo.ManagedEntity, nameToId map[string]int32, idToName map[int32]string) map[string]int64 {
-  data := make(map[string]int64)
+	defer recoverCollector()
+	data := make(map[string]int64)
 	var pM mo.PerformanceManager
 	err := c.RetrieveOne(ctx, *c.ServiceContent.PerfManager, nil, &pM)
 	// With multi vcenter support, connection error should not be fatal anymore
