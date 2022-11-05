@@ -69,7 +69,7 @@ func collectVCenter(vc HostConfig) []vMetric {
   }()
 
   // Cluster Metrics
-  if cfg.clusterStats == true {
+  if cfg.ClusterStats == true {
     wg.Add(1)
     go func() {
       defer wg.Done()
@@ -82,7 +82,7 @@ func collectVCenter(vc HostConfig) []vMetric {
   }
 
   // Cluster Counters
-  if cfg.clusterStats == true {
+  if cfg.ClusterStats == true {
     wg.Add(1)
     go func() {
       defer wg.Done()
@@ -117,7 +117,7 @@ func collectVCenter(vc HostConfig) []vMetric {
   }()
 
   // VM Metrics
-  if cfg.vmStats == true {
+  if cfg.VmStats == true {
     wg.Add(1)
     go func() {
       defer wg.Done()
