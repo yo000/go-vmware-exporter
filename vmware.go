@@ -666,12 +666,36 @@ func HostPerfCounters(vc HostConfig) []vMetric {
 			log.Error(err.Error())
 			return metrics
 		}
+		var h []mo.HostSystem
+		err = v.RetrieveWithFilter(ctx, []string{"HostSystem"}, []string{"name", "parent"}, &h, property.Filter{"name": name})
+		if err != nil {
+			log.Error(err.Error())
+			//return err
+		}
+		if len(h) != 1 {
+			log.Errorf("hostsystem not found: %s", name)
+			continue
+		}
+		// Get name of cluster the host is part of
+		cls, err := ClusterFromRef(c, h[0].Parent.Reference())
+		var cname string
+		if err != nil {
+			if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
+				log.Error(err.Error())
+				return nil
+			} else {
+				cname = "standalone"
+			}
+		} else {
+			cname = cls.Name()
+			cname = strings.ToLower(cname)
+		}
 
 		for _, v := range metric.Value {
 			for _, cn := range cfg.HostPerfCounters {
 				if strings.EqualFold(cn.VName, v.Name) {
 					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help,
-						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "host": name, "instance": v.Instance}})
+						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "cluster": cname, "host": name, "minstance": v.Instance}})
 				}
 			}
 		}
@@ -931,12 +955,34 @@ func VmPerfCounters(vc HostConfig) []vMetric {
 		}
 		host := hr.Name()
 		host = strings.ToLower(host)
+		// Get host parent reference
+		var hostparent mo.HostSystem
+		err = h.Properties(ctx, h.Reference(), []string{"parent"}, &hostparent)
+		if err != nil {
+			log.Error(err.Error())
+			return nil
+		}
+		
+		// Get name of cluster the host is part of
+		cls, err := ClusterFromRef(c, hostparent.Parent.Reference())
+		var cname string
+		if err != nil {
+			if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
+				log.Error(err.Error())
+				return nil
+			} else {
+				cname = "standalone"
+			}
+		} else {
+			cname = cls.Name()
+			cname = strings.ToLower(cname)
+		}
 
 		for _, v := range metric.Value {
 			for _, cn := range cfg.VmPerfCounters {
 				if strings.EqualFold(cn.VName, v.Name) {
 					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help,
-						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": name, "instance": v.Instance}})
+						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "cluster": cname, "host": host, "vmname": name, "minstance": v.Instance}})
 				}
 			}
 		}
