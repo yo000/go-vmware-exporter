@@ -588,6 +588,100 @@ func HostCounters(vc HostConfig) []vMetric {
 	return metrics
 }
 
+func HostPerfCounters(vc HostConfig) []vMetric {
+	defer recoverCollector()
+	log.SetReportCaller(true)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	
+	var metrics []vMetric
+	
+	c, err := NewClient(vc, ctx)
+	// With multi vcenter support, connection error should not be fatal anymore
+	if err != nil {
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
+	}
+	
+	defer c.Logout(ctx)
+	
+	m := view.NewManager(c.Client)
+	
+	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"HostSystem"}, true)
+	if err != nil {
+		log.Error(err.Error())
+	}
+	
+	defer v.Destroy(ctx)
+	
+	hostsRefs, err := v.Find(ctx, []string{"HostSystem"}, nil)
+	if err != nil {
+		log.Error(err.Error())
+	}
+	
+	// Create a PerfManager
+	perfManager := performance.NewManager(c.Client)
+	
+	// Retrieve counters name list
+	cnt, err := perfManager.CounterInfoByName(ctx)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics
+	}
+	
+	// Filter wanted metrics	
+	var names []string
+	for _, cn := range cfg.HostPerfCounters {
+		for name := range cnt {
+			if strings.EqualFold(cn.VName, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	
+	// Create PerfQuerySpec
+	spec := types.PerfQuerySpec{
+		MaxSample:  1,
+		MetricId:   []types.PerfMetricId{{Instance: "*"}},
+		IntervalId: 300,
+	}
+	
+	// Query metrics
+	sample, err := perfManager.SampleByName(ctx, spec, names, hostsRefs)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics
+	}
+	
+	result, err := perfManager.ToMetricSeries(ctx, sample)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics
+	}
+	
+	// Read result
+	for _, metric := range result {
+		host := object.NewHostSystem(c.Client, metric.Entity)
+		name, err := host.ObjectName(ctx)
+		if err != nil {
+			log.Error(err.Error())
+			return metrics
+		}
+
+		for _, v := range metric.Value {
+			for _, cn := range cfg.HostPerfCounters {
+				if strings.EqualFold(cn.VName, v.Name) {
+					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help, 
+						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "host": name, "instance": v.Instance}})
+				}
+			}
+		}
+	}
+	
+	return metrics
+}
+
 // Report status of the HBA attached to a hypervisor to be able to monitor if a hba goes offline
 func HostHBAStatus(vc HostConfig) []vMetric {
 	defer recoverCollector()
@@ -708,7 +802,6 @@ func VmMetrics(vc HostConfig) []vMetric {
 	}
 
 	for _, vm := range vms {
-		
 		// Get Host name
 		h, err := HostSystemFromRef(c, vm.Summary.Runtime.Host.Reference())
 		if err != nil {
@@ -727,51 +820,24 @@ func VmMetrics(vc HostConfig) []vMetric {
 		VmMemory := int64(vm.Config.Hardware.MemoryMB) * 1024 * 1024
 
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_total", mtype: Gauge, help: "VM Memory total, Byte", 
-			value: float64(VmMemory), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
+			value: float64(VmMemory), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_free", mtype: Gauge, help: "VM Memory total, Byte", 
-			value: float64(freeMemory), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
+			value: float64(freeMemory), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_usage", mtype: Gauge, help: "VM Memory usage, Byte", 
-			value: float64(GuestMemoryUsage), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
+			value: float64(GuestMemoryUsage), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_balloonede", mtype: Gauge, help: "VM Memory Ballooned, Byte", 
-			value: float64(BalloonedMemory), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
+			value: float64(BalloonedMemory), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
 
 		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_usage", mtype: Gauge, help: "VM CPU Usage, MHz", 
-			value: float64(vm.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
+			value: float64(vm.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_demand", mtype: Gauge, help: "VM CPU Demand, MHz", 
-			value: float64(vm.Summary.QuickStats.OverallCpuDemand), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
-		/*metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_total", mtype: Gauge, help: "VM CPU Demand, MHz", 
-      value: float64(vm.Config), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})*/
-		/*
-			perfMetrics := PerfQuery(ctx,c,[]string{"cpu.ready.summation", "cpu.usage.none"},vm.GetManagedEntity(),metricMap,idToName)
-			metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_ready", mtype: Gauge, help: "VM CPU % Ready", 
-        value: float64(perfMetrics["cpu.ready.summation"]), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
-		*/
-		
+			value: float64(vm.Summary.QuickStats.OverallCpuDemand), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})		
 	}
 
 	return metrics
 }
 
-
-type VMPerfCounter struct {
-	// Name in vmomi
-	VSphereName string
-	// Name of prometheus metric
-	PName string
-	// Help in prometheus
-	Help string
-}
-
-
 func VmPerfCounters(vc HostConfig) []vMetric {
-	// TODO: Move to config file
-	var counters []VMPerfCounter
-	
-	counters = append(counters, VMPerfCounter{VSphereName: "virtualDisk.numberReadAveraged.average",
-		PName: "vsphere_vm_vdisk_nread_avg", Help: "Average read requests per second"})
-	counters = append(counters, VMPerfCounter{VSphereName: "virtualDisk.numberWriteAveraged.average",
-			PName: "vsphere_vm_vdisk_nwrite_avg", Help: "Average write requests per second"})
-	
 	defer recoverCollector()
 	log.SetReportCaller(true)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
@@ -815,9 +881,9 @@ func VmPerfCounters(vc HostConfig) []vMetric {
 	
 	// Filter wanted metrics	
 	var names []string
-	for _, cn := range counters {
+	for _, cn := range cfg.VmPerfCounters {
 		for name := range cnt {
-			if strings.EqualFold(cn.VSphereName, name) {
+			if strings.EqualFold(cn.VName, name) {
 				names = append(names, name)
 			}
 		}
@@ -869,10 +935,10 @@ func VmPerfCounters(vc HostConfig) []vMetric {
 		host = strings.ToLower(host)
 		
 		for _, v := range metric.Value {
-			for _, cn := range counters {
-				if strings.EqualFold(cn.VSphereName, v.Name) {
+			for _, cn := range cfg.VmPerfCounters {
+				if strings.EqualFold(cn.VName, v.Name) {
 					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help, 
-						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": name, "instance": v.Instance}})
+						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": name, "instance": v.Instance}})
 				}
 			}
 		}
@@ -967,75 +1033,4 @@ func HostSystemFromRef(client *govmomi.Client, ref types.ManagedObjectReference)
 	
 	// We wont never reach this
 	return nil, nil
-}
-
-func GetMetricMap(ctx context.Context, client *govmomi.Client) (MetricMap map[string]int32) {
-	defer recoverCollector()
-	metricMap := make(map[string]int32)
-	var pM mo.PerformanceManager
-	err := client.RetrieveOne(ctx, *client.ServiceContent.PerfManager, nil, &pM)
-	// With multi vcenter support, connection error should not be fatal anymore
-	if err != nil {
-		//log.Fatal(err)
-		log.Error(err)
-		return metricMap
-	}
-
-	for _, perfCounterInfo := range pM.PerfCounter {
-		name := perfCounterInfo.GroupInfo.GetElementDescription().Key + "." + perfCounterInfo.NameInfo.GetElementDescription().Key + "." + string(perfCounterInfo.RollupType)
-		metricMap[name] = perfCounterInfo.Key
-	}
-	return metricMap
-}
-
-func PerfQuery(ctx context.Context, c *govmomi.Client, metrics []string, entity mo.ManagedEntity, nameToId map[string]int32, idToName map[int32]string) map[string]int64 {
-	defer recoverCollector()
-	data := make(map[string]int64)
-	var pM mo.PerformanceManager
-	err := c.RetrieveOne(ctx, *c.ServiceContent.PerfManager, nil, &pM)
-	// With multi vcenter support, connection error should not be fatal anymore
-	if err != nil {
-		//log.Fatal(err)
-		log.Error(err)
-		return data
-	}
-
-	var pmidList []types.PerfMetricId
-	for _, v := range metrics {
-		mid := types.PerfMetricId{CounterId: nameToId[v]}
-		pmidList = append(pmidList, mid)
-	}
-
-	querySpec := types.PerfQuerySpec{
-		Entity:     entity.Reference(),
-		MetricId:   pmidList,
-		MaxSample:  3,
-		IntervalId: 20,
-	}
-	query := types.QueryPerf{
-		This:      pM.Reference(),
-		QuerySpec: []types.PerfQuerySpec{querySpec},
-	}
-
-	response, err := methods.QueryPerf(ctx, c, &query)
-	// With multi vcenter support, connection error should not be fatal anymore
-	if err != nil {
-		//log.Fatal(err)
-		log.Error(err)
-		return data
-	}
-
-	for _, base := range response.Returnval {
-		metric := base.(*types.PerfEntityMetric)
-		for _, baseSeries := range metric.Value {
-			series := baseSeries.(*types.PerfMetricIntSeries)
-			//fmt.Print(idToName[series.Id.CounterId] + ": ")
-			var sum int64
-			for _, v := range series.Value {
-				sum = sum + v
-			}
-			data[idToName[series.Id.CounterId]] = sum / 3
-		}
-	}
-	return data
 }

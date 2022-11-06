@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const xver = "1.4.2"
+const xver = "1.4.3"
 
 
 type vCollector struct {
@@ -115,6 +115,19 @@ func collectVCenter(vc HostConfig) []vMetric {
     metrics = append(metrics, cm...)
     mu.Unlock()
   }()
+  
+  // ESX host Performance Counters
+  if len(cfg.HostPerfCounters) > 0 {
+	  wg.Add(1)
+	  go func() {
+		  defer wg.Done()
+		  defer timeTrack(time.Now(), fmt.Sprintf("HostPerfCounters(%s)", vc.Host))
+		  cm := HostPerfCounters(vc)
+		  mu.Lock()
+		  metrics = append(metrics, cm...)
+		  mu.Unlock()
+	  }()
+  }
 
   // VM Metrics
   if cfg.VmStats == true {
@@ -129,8 +142,8 @@ func collectVCenter(vc HostConfig) []vMetric {
     }()
   }
   
-  // VM Counters
-  if cfg.VmPerfCounters == true {
+  // VM Performance Counters
+  if len(cfg.VmPerfCounters) > 0 {
 	  wg.Add(1)
 	  go func() {
 		  defer wg.Done()

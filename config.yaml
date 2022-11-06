@@ -2,8 +2,23 @@ debug: false
 # Should we scrape VM stats?
 vmstats: true
 # Should we scrape VM Perf counters?
-vmperfcounters: true
+#vmperfcounters: true
+vmperfcounters:
+  - vname: 'virtualDisk.numberReadAveraged.average'
+    pname: 'vsphere_vm_vdisk_nread_avg'
+    help: 'Average read requests per second'
+  - vname: 'virtualDisk.numberWriteAveraged.average'
+    pname: 'vsphere_vm_vdisk_nwrite_avg'
+    help: 'Average write requests per second'
+  - vname: 'disk.usage.average'
+    pname: 'vsphere_vm_disk_usage_avg'
+    help: 'Averafe use rate in kilobytes per second'
 
+hostperfcounters:
+  - vname: 'power.power.average'
+    pname: 'vsphere_host_power_avg'
+    help: 'Average host power use in watts'
+    
 # List of vmware targets
 hosts:
   - host: vcenter1.vmware.lan
