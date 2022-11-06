@@ -26,7 +26,7 @@ type PerfCounter struct {
 	// Name of prometheus metric
 	PName string `yaml:"pname"`
 	// Help in prometheus
-	Help string  `yaml:"help"`
+	Help string `yaml:"help"`
 }
 
 type Configuration struct {
@@ -37,8 +37,6 @@ type Configuration struct {
 	VmPerfCounters   []PerfCounter `yaml:"vmperfcounters"`
 	HostPerfCounters []PerfCounter `yaml:"hostperfcounters"`
 }
-
-
 
 var (
 	cfg     Configuration
@@ -112,7 +110,7 @@ func loadConfig() {
 		if len(os.Getenv("VMPERFCOUNTERS")) > 0 {
 			rawpc := os.Getenv("VMPERFCOUNTERS")
 			pc := strings.Split(rawpc, ";")
-			if len(pc) % 3 != 0 {
+			if len(pc)%3 != 0 {
 				log.Fatal("Invalid VMPERFCOUNTERS value")
 			}
 			for i := 0; i < len(pc); i += 3 {
@@ -122,7 +120,7 @@ func loadConfig() {
 		if len(os.Getenv("HOSTPERFCOUNTERS")) > 0 {
 			rawpc := os.Getenv("HOSTPERFCOUNTERS")
 			pc := strings.Split(rawpc, ";")
-			if len(pc) % 3 != 0 {
+			if len(pc)%3 != 0 {
 				log.Fatal("Invalid HOSTPERFCOUNTERS value")
 			}
 			for i := 0; i < len(pc); i += 3 {
