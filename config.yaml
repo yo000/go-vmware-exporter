@@ -1,6 +1,8 @@
 debug: false
 # Should we scrape VM stats?
 vmstats: true
+# Should we scrape VM Perf counters?
+vmperfcounters: true
 
 # List of vmware targets
 hosts:

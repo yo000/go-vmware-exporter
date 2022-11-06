@@ -20,10 +20,11 @@ type HostConfig struct {
 }
 
 type Configuration struct {
-	Hosts        []HostConfig `yaml:"hosts"`
-	Debug        bool         `yaml:"debug"`
-	VmStats      bool         `yaml:"vmstats"`
-	ClusterStats bool         `yaml:"clusterstats"`
+	Hosts          []HostConfig `yaml:"hosts"`
+	Debug          bool         `yaml:"debug"`
+	VmStats        bool         `yaml:"vmstats"`
+	VmPerfCounters bool         `yaml:"vmperfcounters"`
+	ClusterStats   bool         `yaml:"clusterstats"`
 }
 
 var (
@@ -44,6 +45,7 @@ func main() {
 		log.SetLevel(log.DebugLevel)
 		log.Debugf("debug=%v\n", cfg.Debug)
 		log.Debugf("vmstats=%v\n", cfg.VmStats)
+		log.Debugf("vmperfcounters=%v\n", cfg.VmPerfCounters)
 		log.Debugf("clusterstats=%v\n", cfg.ClusterStats)
 	}
 
@@ -92,6 +94,11 @@ func loadConfig() {
 			cfg.VmStats = false
 		} else {
 			cfg.VmStats = true
+		}
+		if os.Getenv("VMPERFCOUNTERS") == "False" {
+			cfg.VmPerfCounters = false
+		} else {
+			cfg.VmPerfCounters = true
 		}
 	}
 

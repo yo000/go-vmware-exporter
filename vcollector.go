@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const xver = "1.4.1"
+const xver = "1.4.2"
 
 
 type vCollector struct {
@@ -127,6 +127,19 @@ func collectVCenter(vc HostConfig) []vMetric {
       metrics = append(metrics, cm...)
       mu.Unlock()
     }()
+  }
+  
+  // VM Counters
+  if cfg.VmPerfCounters == true {
+	  wg.Add(1)
+	  go func() {
+		  defer wg.Done()
+		  defer timeTrack(time.Now(), fmt.Sprintf("VmPerfCounters(%s)", vc.Host))
+		  cm := VmPerfCounters(vc)
+		  mu.Lock()
+		  metrics = append(metrics, cm...)
+		  mu.Unlock()
+	  }()
   }
 
   // HBA Status

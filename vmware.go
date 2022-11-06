@@ -676,7 +676,7 @@ func HostHBAStatus(vc HostConfig) []vMetric {
 func VmMetrics(vc HostConfig) []vMetric {
 	defer recoverCollector()
 	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
 	var metrics []vMetric
@@ -707,14 +707,18 @@ func VmMetrics(vc HostConfig) []vMetric {
 		log.Error(err.Error())
 	}
 
-	metricMap := GetMetricMap(ctx, c)
-
-	idToName := make(map[int32]string)
-	for k, v := range metricMap {
-		idToName[v] = k
-	}
-
 	for _, vm := range vms {
+		
+		// Get Host name
+		h, err := HostSystemFromRef(c, vm.Summary.Runtime.Host.Reference())
+		if err != nil {
+			if false == strings.EqualFold(err.Error(), "Not an *object.HostSystem") {
+				log.Error(err.Error())
+				return nil
+			}
+		}
+		host := h.Name()
+		host = strings.ToLower(host)
 
 		// VM Memory
 		freeMemory := (int64(vm.Summary.Config.MemorySizeMB) * 1024 * 1024) - (int64(vm.Summary.QuickStats.GuestMemoryUsage) * 1024 * 1024)
@@ -723,18 +727,18 @@ func VmMetrics(vc HostConfig) []vMetric {
 		VmMemory := int64(vm.Config.Hardware.MemoryMB) * 1024 * 1024
 
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_total", mtype: Gauge, help: "VM Memory total, Byte", 
-      value: float64(VmMemory), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+			value: float64(VmMemory), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_free", mtype: Gauge, help: "VM Memory total, Byte", 
-      value: float64(freeMemory), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+			value: float64(freeMemory), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_usage", mtype: Gauge, help: "VM Memory usage, Byte", 
-      value: float64(GuestMemoryUsage), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+			value: float64(GuestMemoryUsage), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_balloonede", mtype: Gauge, help: "VM Memory Ballooned, Byte", 
-      value: float64(BalloonedMemory), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+			value: float64(BalloonedMemory), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
 
 		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_usage", mtype: Gauge, help: "VM CPU Usage, MHz", 
-      value: float64(vm.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+			value: float64(vm.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_demand", mtype: Gauge, help: "VM CPU Demand, MHz", 
-      value: float64(vm.Summary.QuickStats.OverallCpuDemand), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
+			value: float64(vm.Summary.QuickStats.OverallCpuDemand), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": vm.Name}})
 		/*metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_total", mtype: Gauge, help: "VM CPU Demand, MHz", 
       value: float64(vm.Config), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})*/
 		/*
@@ -742,7 +746,136 @@ func VmMetrics(vc HostConfig) []vMetric {
 			metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_ready", mtype: Gauge, help: "VM CPU % Ready", 
         value: float64(perfMetrics["cpu.ready.summation"]), labels: map[string]string{"vcenter": vc.Host, "vmname": vm.Name}})
 		*/
+		
+	}
 
+	return metrics
+}
+
+
+type VMPerfCounter struct {
+	// Name in vmomi
+	VSphereName string
+	// Name of prometheus metric
+	PName string
+	// Help in prometheus
+	Help string
+}
+
+
+func VmPerfCounters(vc HostConfig) []vMetric {
+	// TODO: Move to config file
+	var counters []VMPerfCounter
+	
+	counters = append(counters, VMPerfCounter{VSphereName: "virtualDisk.numberReadAveraged.average",
+		PName: "vsphere_vm_vdisk_nread_avg", Help: "Average read requests per second"})
+	counters = append(counters, VMPerfCounter{VSphereName: "virtualDisk.numberWriteAveraged.average",
+			PName: "vsphere_vm_vdisk_nwrite_avg", Help: "Average write requests per second"})
+	
+	defer recoverCollector()
+	log.SetReportCaller(true)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	
+	var metrics []vMetric
+	
+	c, err := NewClient(vc, ctx)
+	// With multi vcenter support, connection error should not be fatal anymore
+	if err != nil {
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
+	}
+	
+	defer c.Logout(ctx)
+	
+	m := view.NewManager(c.Client)
+	
+	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"VirtualMachine"}, true)
+	if err != nil {
+		log.Error(err.Error())
+	}
+	
+	defer v.Destroy(ctx)
+	
+	vmsRefs, err := v.Find(ctx, []string{"VirtualMachine"}, nil)
+	if err != nil {
+		log.Error(err.Error())
+	}
+	
+	// Create a PerfManager
+	perfManager := performance.NewManager(c.Client)
+	
+	// Retrieve counters name list
+	cnt, err := perfManager.CounterInfoByName(ctx)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics
+	}
+	
+	// Filter wanted metrics	
+	var names []string
+	for _, cn := range counters {
+		for name := range cnt {
+			if strings.EqualFold(cn.VSphereName, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	
+	// Create PerfQuerySpec
+	spec := types.PerfQuerySpec{
+		MaxSample:  1,
+		MetricId:   []types.PerfMetricId{{Instance: "*"}},
+		IntervalId: 300,
+	}
+	
+	// Query metrics
+	sample, err := perfManager.SampleByName(ctx, spec, names, vmsRefs)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics
+	}
+	
+	result, err := perfManager.ToMetricSeries(ctx, sample)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics
+	}
+	
+	// Read result
+	for _, metric := range result {
+		vm := object.NewVirtualMachine(c.Client, metric.Entity)
+		name, err := vm.ObjectName(ctx)
+		if err != nil {
+			log.Error(err.Error())
+			return metrics
+		}
+		
+		// Get Host name
+		h, err := vm.HostSystem(ctx)
+		if err != nil {
+			log.Error(err.Error())
+			return nil
+		}
+		hr, err := HostSystemFromRef(c, h.Reference())
+		if err != nil {
+			if false == strings.EqualFold(err.Error(), "Not an *object.HostSystem") {
+				log.Error(err.Error())
+				return nil
+			}
+		}
+		host := hr.Name()
+		host = strings.ToLower(host)
+		
+		for _, v := range metric.Value {
+			for _, cn := range counters {
+				if strings.EqualFold(cn.VSphereName, v.Name) {
+					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help, 
+						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "esx": host, "vmname": name, "instance": v.Instance}})
+				}
+			}
+		}
 	}
 
 	return metrics
@@ -809,6 +942,29 @@ func ClusterFromRef(client *govmomi.Client, ref types.ManagedObjectReference) (*
 			return nil, errors.New("Not an *object.ClusterComputeResource")
 	}
 
+	// We wont never reach this
+	return nil, nil
+}
+
+func HostSystemFromRef(client *govmomi.Client, ref types.ManagedObjectReference) (*object.HostSystem, error) {
+	defer recoverCollector()
+	finder := find.NewFinder(client.Client, false)
+	
+	ctx, cancel := context.WithTimeout(context.Background(),  2*time.Second)
+	defer cancel()
+	obj, err := finder.ObjectReference(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	
+	switch obj.(type) {
+		case *object.HostSystem:
+			return obj.(*object.HostSystem), nil
+		default:
+			log.Debugf("This is NOT *object.HostSystem: %T", obj)
+			return nil, errors.New("Not an *object.HostSystem")
+	}
+	
 	// We wont never reach this
 	return nil, nil
 }
