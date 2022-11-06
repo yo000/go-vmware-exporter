@@ -1,6 +1,6 @@
 # Prometheus vmware exporter in golang
 
-**Up and running in 3 Steps**
+**Up and running in 3 Steps on docker**
 
 1 - Build:
 ```
@@ -20,8 +20,16 @@ $ docker-compose up -d
 ```
 
 
-Curl http://localhost:9094
+curl http://localhost:9094
 
+**Or build you a nice binary for kiss adepts**
+```
+$ git clone https://github.com/yo000/go-vmware-exporter.git && cd go-vmware-exporter
+$ env GOOS=linux go build -o go-vmware-exporter.linux
+$ ./go-vmware-exporter.linux -config config.yaml
+```
+
+Set GOOS to your preferred platform
 
 # Supported Metrics
 
@@ -43,5 +51,5 @@ hostperfcounters:
     help: 'Average host power use in watts'
 ```
 
-See https://docs.vmware.com/en/vRealize-Operations/8.10/com.vmware.vcom.metrics.doc/GUID-C3CAAE15-2E83-431F-8F2D-C5297A3B6EA9.html for host metrics
+See https://docs.vmware.com/en/vRealize-Operations/8.10/com.vmware.vcom.metrics.doc/GUID-C3CAAE15-2E83-431F-8F2D-C5297A3B6EA9.html for host metrics  
 https://docs.vmware.com/en/vRealize-Operations/8.10/com.vmware.vcom.metrics.doc/GUID-1322F5A4-DA1D-481F-BBEA-99B228E96AF2.html for vm metrics
