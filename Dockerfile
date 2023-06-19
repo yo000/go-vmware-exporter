@@ -1,12 +1,12 @@
 
 # Start from golang v1.11 base image
-FROM golang:1.12 as builder
+FROM golang:1.19 as builder
 
 # Add Maintainer Info
-LABEL maintainer="MS <marstid@juppi.net>"
+LABEL maintainer="<johan@nosd.in>"
 
 # Set the Current Working Directory inside the container
-WORKDIR /go/src/github.com/marstid/go-vmware-exporter
+WORKDIR /go/src/github.com/yo000/go-vmware-exporter
 
 # Copy everything from the current directory to the PWD(Present Working Directory) inside the container
 COPY . .
@@ -28,7 +28,7 @@ WORKDIR /root/
 # Copy the Pre-built binary file from the previous stage
 COPY --from=builder /go/bin/go-vm .
 
-COPY --from=builder /go/src/github.com/marstid/go-vmware-exporter/config.properties .
+COPY --from=builder /go/src/github.com/yo000/go-vmware-exporter/config.yaml .
 
 EXPOSE 8080
 
