@@ -1,5 +1,12 @@
 # Prometheus vmware exporter in golang
 
+This fork add :  
+* Multi vcenter scraping  
+* Optional VM/Host performance counters  
+* yaml config file  
+
+See config.yaml for examples and syntax  
+
 **Up and running in 3 Steps on docker**
 
 1 - Build:
