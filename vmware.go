@@ -935,9 +935,6 @@ func VmPerfCounters(vc HostConfig) []vMetric {
 	// Read result
 	for _, metric := range result {
 		vm := object.NewVirtualMachine(c.Client, metric.Entity)
-		// REMOVE ME
-		fmt.Printf("DEBUG: moref=%s\n", metric.Entity.Value)
-		// END OF REMOVE ME
 		name, err := vm.ObjectName(ctx)
 		moref := string(metric.Entity.Value)
 		if err != nil {
