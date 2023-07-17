@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"fmt"
 )
 
 type MetricType int
@@ -842,18 +843,18 @@ func VmMetrics(vc HostConfig) []vMetric {
 		VmMemory := int64(vm.Config.Hardware.MemoryMB) * 1024 * 1024
 
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_total", mtype: Gauge, help: "VM Memory total, Byte",
-			value: float64(VmMemory), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
+			value: float64(VmMemory), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name, "moref": vm.Summary.Vm.Value}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_free", mtype: Gauge, help: "VM Memory total, Byte",
-			value: float64(freeMemory), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
+			value: float64(freeMemory), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name, "moref": vm.Summary.Vm.Value}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_usage", mtype: Gauge, help: "VM Memory usage, Byte",
-			value: float64(GuestMemoryUsage), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
+			value: float64(GuestMemoryUsage), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name, "moref": vm.Summary.Vm.Value}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_mem_balloonede", mtype: Gauge, help: "VM Memory Ballooned, Byte",
-			value: float64(BalloonedMemory), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
+			value: float64(BalloonedMemory), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name, "moref": vm.Summary.Vm.Value}})
 
 		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_usage", mtype: Gauge, help: "VM CPU Usage, MHz",
-			value: float64(vm.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
+			value: float64(vm.Summary.QuickStats.OverallCpuUsage), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name, "moref": vm.Summary.Vm.Value}})
 		metrics = append(metrics, vMetric{name: "vsphere_vm_cpu_demand", mtype: Gauge, help: "VM CPU Demand, MHz",
-			value: float64(vm.Summary.QuickStats.OverallCpuDemand), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name}})
+			value: float64(vm.Summary.QuickStats.OverallCpuDemand), labels: map[string]string{"vcenter": vc.Host, "host": host, "vmname": vm.Name, "moref": vm.Summary.Vm.Value}})
 	}
 
 	return metrics
@@ -934,7 +935,11 @@ func VmPerfCounters(vc HostConfig) []vMetric {
 	// Read result
 	for _, metric := range result {
 		vm := object.NewVirtualMachine(c.Client, metric.Entity)
+		// REMOVE ME
+		fmt.Printf("DEBUG: moref=%s\n", metric.Entity.Value)
+		// END OF REMOVE ME
 		name, err := vm.ObjectName(ctx)
+		moref := string(metric.Entity.Value)
 		if err != nil {
 			log.Error(err.Error())
 			return metrics
@@ -982,7 +987,7 @@ func VmPerfCounters(vc HostConfig) []vMetric {
 			for _, cn := range cfg.VmPerfCounters {
 				if strings.EqualFold(cn.VName, v.Name) {
 					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help,
-						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "cluster": cname, "host": host, "vmname": name, "minstance": v.Instance}})
+						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "cluster": cname, "host": host, "vmname": name, "moref": moref, "minstance": v.Instance}})
 				}
 			}
 		}
