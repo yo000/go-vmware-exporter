@@ -56,8 +56,9 @@ type Configuration struct {
 }
 
 var (
-	cfg     Configuration
-	cfgFile *string
+	cfg       Configuration
+	cfgFile   *string
+	StartTime int64
 )
 
 func getCfgVcHostFromName(vchost string) (*HostConfig, error) {
@@ -72,6 +73,8 @@ func getCfgVcHostFromName(vchost string) (*HostConfig, error) {
 func main() {
 	var err error
 	log.SetReportCaller(true)
+
+	StartTime = time.Now().Unix()
 
 	port := flag.Int("port", 9094, "Port to attach exporter")
 	cfgFile = flag.String("config", "config.yaml", "config file")

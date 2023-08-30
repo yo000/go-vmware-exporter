@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-const xver = "1.4.7d"
+const xver = "1.4.7f"
 
 type vCollector struct {
 	desc        string
@@ -239,6 +239,11 @@ func (c *vCollector) Collect(ch chan<- prometheus.Metric) {
 		prometheus.NewDesc("vmware_exporter_version", "go-vmware-export Version", []string{}, prometheus.Labels{"version": xver}),
 		prometheus.GaugeValue,
 		1,
+	)
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc("vmware_exporter_time_start", "go-vmware-export starting time in UNIX timestamp (seconds)", []string{}, nil),
+		prometheus.GaugeValue,
+		float64(StartTime),
 	)
 
 	// Make sure we can access data without being overwrote by a collecting thread
