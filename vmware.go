@@ -94,7 +94,7 @@ func StdMetrics(vc HostConfig) []vMetric {
 // New connection will be handled where needed (ie when getting metrics from vcenter)
 // metricType = "std" ou "perf"
 // FIXME : Recuperer cette valeur "metricType" automatiquement
-func handleError(err error, vc  *HostConfig, metricType string) {
+func handleError(err error, vc *HostConfig, metricType string) {
 	if strings.HasSuffix(err.Error(), "context deadline exceeded") {
 		log.Errorf("Timeout : %s", err.Error())
 		log.Errorf("Création d'un nouveau context pour %s", metricType)
@@ -109,6 +109,7 @@ func handleError(err error, vc  *HostConfig, metricType string) {
 					log.Debugf("Cancel Std Context")
 					vc.StdConnection.CancelContext()
 				}
+				vc.StdConnection.Context, vc.StdConnection.CancelContext = context.WithTimeout(context.Background(), cfg.ReqTimeout)
 			case "perf":
 				if(vc.PerfConnection.Client != nil) {
 					log.Debugf("Perf Client Logout")
@@ -118,6 +119,7 @@ func handleError(err error, vc  *HostConfig, metricType string) {
 					log.Debugf("Cancel Perf Context")
 					vc.PerfConnection.CancelContext()
 				}
+				vc.PerfConnection.Context, vc.PerfConnection.CancelContext = context.WithTimeout(context.Background(), cfg.ReqPerfTimeout)
 		}
 	} else {
 		log.Errorf("Error in %s collector: %s", err.Error())
