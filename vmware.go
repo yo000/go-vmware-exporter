@@ -1,8 +1,13 @@
 package main
 
 import (
-	"context"
+	"math"
+	"time"
 	"errors"
+	"context"
+	"net/url"
+	"strings"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
@@ -14,11 +19,6 @@ import (
 	"github.com/vmware/govmomi/vim25/methods"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
-	"math"
-	"net/url"
-	"strings"
-	"time"
-	"fmt"
 )
 
 type MetricType int
@@ -62,14 +62,317 @@ main.HostCounters({{0xc0000cc3a8, 0x18}, {0xc0000a74d4, 0xb}, {0xc0000cc3c0, 0x1
 */
 func recoverCollector() {
 	if r := recover(); r != nil {
-		log.Errorf("recovered from %v\n", r)
+		log.Errorf("recovered from %v", r)
 	}
+}
+
+/* Will replace all std metrics fct
+func StdMetrics(vc HostConfig) []vMetric {
+	defer recoverCollector()
+	log.SetReportCaller(true)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ReqTimeout)
+	defer cancel()
+
+	var metrics []vMetric
+
+	// Create Web client, with its context
+	c, err := NewClient(vc, ctx)
+	// With multi vcenter support, connection error should not be fatal anymore
+	if err != nil {
+		//log.Fatal(err)
+		log.Error(err)
+		return metrics
+	}
+
+	defer c.Logout(ctx)
+}
+*/
+
+
+// Handle context timeout ("Post "https://hbgt-vcenter4.hbgt.intra/sdk": context deadline exceeded")
+//  by cancelling previous, creating a new context.
+// New connection will be handled where needed (ie when getting metrics from vcenter)
+// metricType = "std" ou "perf"
+// FIXME : Recuperer cette valeur "metricType" automatiquement
+func handleError(err error, vc  *HostConfig, metricType string) {
+	if strings.HasSuffix(err.Error(), "context deadline exceeded") {
+		log.Errorf("Timeout : %s", err.Error())
+		log.Errorf("Création d'un nouveau context pour %s", metricType)
+
+		switch metricType {
+			case "std":
+				if(vc.StdConnection.Client != nil) {
+					log.Debugf("Std Client Logout")
+					vc.StdConnection.Client.Logout(vc.StdConnection.Context)
+				}
+				if(vc.StdConnection.CancelContext != nil) {
+					log.Debugf("Cancel Std Context")
+					vc.StdConnection.CancelContext()
+				}
+			case "perf":
+				if(vc.PerfConnection.Client != nil) {
+					log.Debugf("Perf Client Logout")
+					vc.PerfConnection.Client.Logout(vc.PerfConnection.Context)
+				}
+				if(vc.PerfConnection.CancelContext != nil) {
+					log.Debugf("Cancel Perf Context")
+					vc.PerfConnection.CancelContext()
+				}
+		}
+	} else {
+		log.Errorf("Error in %s collector: %s", err.Error())
+	}
+}
+
+func checkConnection(vc *HostConfig, metricType string) error {
+	var err error
+
+	// Create connection if needed
+	switch metricType {
+		case "std":
+			if (vc.StdConnection.Client == nil) {
+				log.Debug("Create std connection")
+				vc.StdConnection.Client, err = NewClient(*vc, vc.StdConnection.Context)
+				if err != nil {
+					return err
+				}
+			}
+		case "perf":
+			if (vc.PerfConnection.Client == nil) {
+				log.Debug("Create perf connection")
+				vc.PerfConnection.Client, err = NewClient(*vc, vc.PerfConnection.Context)
+				if err != nil {
+					return err
+				}
+			}
+	}
+	return nil
+}
+
+// Replace HostPerfCounters and VmPerfCounters
+func PerfCounters(vc *HostConfig) []vMetric {
+	//defer recoverCollector()
+
+	var metrics []vMetric
+	var err error
+
+	if err = checkConnection(vc, "perf"); err != nil {
+		log.Errorf("Error connecting to %s: %s", vc.Host, err)
+		return metrics
+	}
+
+	m := view.NewManager(vc.PerfConnection.Client.Client)
+	defer m.Destroy(vc.PerfConnection.Context)
+
+	var moTypes []string
+	if len(cfg.VmPerfCounters) > 0 {
+		moTypes = append(moTypes, "VirtualMachine")
+	}
+	if len(cfg.HostPerfCounters) > 0 {
+		moTypes = append(moTypes, "HostSystem")
+	}
+
+	log.Debugf("Creating view for object types %v", moTypes)
+
+	v, err := m.CreateContainerView(vc.PerfConnection.Context, vc.PerfConnection.Client.ServiceContent.RootFolder, moTypes, true)
+	if err != nil {
+		handleError(err, vc, "perf")
+		return metrics
+	}
+	if v != nil {
+		defer v.Destroy(vc.PerfConnection.Context)
+	}
+
+	// Create a PerfManager
+	perfManager := performance.NewManager(vc.PerfConnection.Client.Client)
+
+	// Retrieve counters name list
+	cnt, err := perfManager.CounterInfoByName(vc.PerfConnection.Context)
+	if err != nil {
+		handleError(err, vc, "perf")
+		return metrics
+	}
+
+	// Filter wanted metrics
+	var names []string
+	for _, cn := range cfg.HostPerfCounters {
+		for name := range cnt {
+			if strings.EqualFold(cn.VName, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	for _, cn := range cfg.VmPerfCounters {
+		for name := range cnt {
+			if strings.EqualFold(cn.VName, name) {
+				names = append(names, name)
+			}
+		}
+	}
+
+	// Create PerfQuerySpec
+	spec := types.PerfQuerySpec{
+		MaxSample:  1,
+		MetricId:   []types.PerfMetricId{{Instance: "*"}},
+		IntervalId: 300,
+	}
+
+	// Get objects references
+	moRefs, err := v.Find(vc.PerfConnection.Context, moTypes, nil)
+	if err != nil {
+		handleError(err, vc, "perf")
+		return metrics
+	}
+
+	// Query metrics
+	sample, err := perfManager.SampleByName(vc.PerfConnection.Context, spec, names, moRefs)
+	if err != nil {
+		handleError(err, vc, "perf")
+		//v.Destroy(vc.PerfConnection.Context)
+		return metrics
+	}
+
+	result, err := perfManager.ToMetricSeries(vc.PerfConnection.Context, sample)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics
+	}
+
+	// Read result
+	for _, metric := range result {
+		switch metric.Entity.Type {
+			case "VirtualMachine":
+				m, _ := GetVmMetricsFromEntity(vc, metric)
+				metrics = append(metrics, m...)
+			case "HostSystem":
+				m, _ := GetHostMetricsFromEntity(vc, v, metric)
+				metrics = append(metrics, m...)
+			default:
+				log.Infof("Unknown entity type (%s) %s", metric.Entity.Type, metric.Entity.Value)
+		}
+	}
+
+	return metrics
+}
+
+func GetVmMetricsFromEntity(vc *HostConfig, ent performance.EntityMetric) ([]vMetric, error) {
+	var metrics []vMetric
+
+	vm := object.NewVirtualMachine(vc.PerfConnection.Client.Client, ent.Entity)
+	name, err := vm.ObjectName(vc.PerfConnection.Context)
+	moref := string(ent.Entity.Value)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics, err
+	}
+
+	// Get Host name
+	h, err := vm.HostSystem(vc.PerfConnection.Context)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics, err
+	}
+
+	hr, err := HostSystemFromRef(vc.PerfConnection.Client, h.Reference())
+	if err != nil {
+		if false == strings.EqualFold(err.Error(), "Not an *object.HostSystem") {
+			log.Error(err.Error())
+			return metrics, err
+		}
+	}
+	host := hr.Name()
+	host = strings.ToLower(host)
+	// Get host parent reference
+	var hostparent mo.HostSystem
+	err = h.Properties(vc.PerfConnection.Context, h.Reference(), []string{"parent"}, &hostparent)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics, err
+	}
+
+	// Get name of cluster the host is part of
+	cls, err := ClusterFromRef(vc.PerfConnection.Client, hostparent.Parent.Reference())
+	var cname string
+	if err != nil {
+		if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
+			log.Error(err.Error())
+			return metrics, err
+		} else {
+			cname = "standalone"
+		}
+	} else {
+		cname = cls.Name()
+		cname = strings.ToLower(cname)
+	}
+
+	for _, v := range ent.Value {
+		for _, cn := range cfg.VmPerfCounters {
+			if strings.EqualFold(cn.VName, v.Name) {
+				if len(v.Value) > 0 {
+					//log.Debugf("Storing VM metric %s with value %d", cn.PName, v.Value[0])
+					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help,
+						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "cluster": cname, "host": host, "vmname": name, "moref": moref, "minstance": v.Instance}})
+				}
+			}
+		}
+	}
+
+	return metrics, nil
+}
+
+func GetHostMetricsFromEntity(vc *HostConfig, view *view.ContainerView,ent performance.EntityMetric) ([]vMetric, error) {
+	var metrics []vMetric
+
+	host := object.NewHostSystem(vc.PerfConnection.Client.Client, ent.Entity)
+	name, err := host.ObjectName(vc.PerfConnection.Context)
+	if err != nil {
+		log.Error(err.Error())
+		return metrics, err
+	}
+	var h []mo.HostSystem
+	err = view.RetrieveWithFilter(vc.PerfConnection.Context, []string{"HostSystem"}, []string{"name", "parent"}, &h, property.Filter{"name": name})
+	if err != nil {
+		log.Error(err.Error())
+		return metrics, err
+	}
+	if len(h) != 1 {
+		log.Errorf("HostSystem not found: %s", name)
+		return metrics, errors.New("HostSystem not found")
+	}
+	// Get name of cluster the host is part of
+	cls, err := ClusterFromRef(vc.PerfConnection.Client, h[0].Parent.Reference())
+	var cname string
+	if err != nil {
+		if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
+			log.Error(err.Error())
+			return metrics, err
+		} else {
+			cname = "standalone"
+		}
+	} else {
+		cname = cls.Name()
+		cname = strings.ToLower(cname)
+	}
+
+	for _, v := range ent.Value {
+		for _, cn := range cfg.HostPerfCounters {
+			if strings.EqualFold(cn.VName, v.Name) {
+				if len(v.Value) > 0 {
+					//log.Debugf("Storing Host metric %s with value %d", cn.PName, v.Value[0])
+					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help,
+						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "cluster": cname, "host": name, "minstance": v.Instance}})
+				}
+			}
+		}
+	}
+
+	return metrics, nil
 }
 
 func DSMetrics(vc HostConfig) []vMetric {
 	defer recoverCollector()
 	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ReqTimeout)
 	defer cancel()
 
 	var metrics []vMetric
@@ -85,6 +388,7 @@ func DSMetrics(vc HostConfig) []vMetric {
 	defer c.Logout(ctx)
 
 	m := view.NewManager(c.Client)
+	defer m.Destroy(ctx)
 
 	vmgr, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"ClusterComputeResource"}, true)
 	if err != nil {
@@ -139,7 +443,7 @@ func DSMetrics(vc HostConfig) []vMetric {
 func ClusterMetrics(vc HostConfig) []vMetric {
 	defer recoverCollector()
 	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ReqTimeout)
 	defer cancel()
 
 	var metrics []vMetric
@@ -161,6 +465,7 @@ func ClusterMetrics(vc HostConfig) []vMetric {
 	}
 
 	m := view.NewManager(c.Client)
+	defer m.Destroy(ctx)
 
 	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"ResourcePool"}, true)
 	if err != nil {
@@ -291,7 +596,7 @@ func ClusterMetrics(vc HostConfig) []vMetric {
 func ClusterCounters(vc HostConfig) []vMetric {
 	defer recoverCollector()
 	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ReqTimeout)
 	defer cancel()
 
 	var metrics []vMetric
@@ -307,6 +612,7 @@ func ClusterCounters(vc HostConfig) []vMetric {
 	defer c.Logout(ctx)
 
 	m := view.NewManager(c.Client)
+	defer m.Destroy(ctx)
 
 	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"ClusterComputeResource"}, true)
 	if err != nil {
@@ -383,7 +689,7 @@ func ClusterCounters(vc HostConfig) []vMetric {
 func HostMetrics(vc HostConfig) []vMetric {
 	defer recoverCollector()
 	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ReqTimeout)
 	defer cancel()
 
 	var metrics []vMetric
@@ -400,6 +706,7 @@ func HostMetrics(vc HostConfig) []vMetric {
 	defer c.Logout(ctx)
 
 	m := view.NewManager(c.Client)
+	defer m.Destroy(ctx)
 
 	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"HostSystem"}, true)
 	if err != nil {
@@ -468,7 +775,7 @@ func HostMetrics(vc HostConfig) []vMetric {
 func HostCounters(vc HostConfig) []vMetric {
 	defer recoverCollector()
 	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ReqTimeout)
 	defer cancel()
 
 	var metrics []vMetric
@@ -485,6 +792,7 @@ func HostCounters(vc HostConfig) []vMetric {
 	defer c.Logout(ctx)
 
 	m := view.NewManager(c.Client)
+	defer m.Destroy(ctx)
 
 	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"HostSystem"}, true)
 	if err != nil {
@@ -587,129 +895,11 @@ func HostCounters(vc HostConfig) []vMetric {
 	return metrics
 }
 
-func HostPerfCounters(vc HostConfig) []vMetric {
-	defer recoverCollector()
-	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
-
-	var metrics []vMetric
-
-	c, err := NewClient(vc, ctx)
-	// With multi vcenter support, connection error should not be fatal anymore
-	if err != nil {
-		//log.Fatal(err)
-		log.Error(err)
-		return metrics
-	}
-
-	defer c.Logout(ctx)
-
-	m := view.NewManager(c.Client)
-
-	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"HostSystem"}, true)
-	if err != nil {
-		log.Error(err.Error())
-	}
-
-	defer v.Destroy(ctx)
-
-	hostsRefs, err := v.Find(ctx, []string{"HostSystem"}, nil)
-	if err != nil {
-		log.Error(err.Error())
-	}
-
-	// Create a PerfManager
-	perfManager := performance.NewManager(c.Client)
-
-	// Retrieve counters name list
-	cnt, err := perfManager.CounterInfoByName(ctx)
-	if err != nil {
-		log.Error(err.Error())
-		return metrics
-	}
-
-	// Filter wanted metrics
-	var names []string
-	for _, cn := range cfg.HostPerfCounters {
-		for name := range cnt {
-			if strings.EqualFold(cn.VName, name) {
-				names = append(names, name)
-			}
-		}
-	}
-
-	// Create PerfQuerySpec
-	spec := types.PerfQuerySpec{
-		MaxSample:  1,
-		MetricId:   []types.PerfMetricId{{Instance: "*"}},
-		IntervalId: 300,
-	}
-
-	// Query metrics
-	sample, err := perfManager.SampleByName(ctx, spec, names, hostsRefs)
-	if err != nil {
-		log.Error(err.Error())
-		return metrics
-	}
-
-	result, err := perfManager.ToMetricSeries(ctx, sample)
-	if err != nil {
-		log.Error(err.Error())
-		return metrics
-	}
-
-	// Read result
-	for _, metric := range result {
-		host := object.NewHostSystem(c.Client, metric.Entity)
-		name, err := host.ObjectName(ctx)
-		if err != nil {
-			log.Error(err.Error())
-			return metrics
-		}
-		var h []mo.HostSystem
-		err = v.RetrieveWithFilter(ctx, []string{"HostSystem"}, []string{"name", "parent"}, &h, property.Filter{"name": name})
-		if err != nil {
-			log.Error(err.Error())
-			//return err
-		}
-		if len(h) != 1 {
-			log.Errorf("hostsystem not found: %s", name)
-			continue
-		}
-		// Get name of cluster the host is part of
-		cls, err := ClusterFromRef(c, h[0].Parent.Reference())
-		var cname string
-		if err != nil {
-			if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
-				log.Error(err.Error())
-				return nil
-			} else {
-				cname = "standalone"
-			}
-		} else {
-			cname = cls.Name()
-			cname = strings.ToLower(cname)
-		}
-
-		for _, v := range metric.Value {
-			for _, cn := range cfg.HostPerfCounters {
-				if strings.EqualFold(cn.VName, v.Name) {
-					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help,
-						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "cluster": cname, "host": name, "minstance": v.Instance}})
-				}
-			}
-		}
-	}
-
-	return metrics
-}
-
 // Report status of the HBA attached to a hypervisor to be able to monitor if a hba goes offline
 func HostHBAStatus(vc HostConfig) []vMetric {
 	defer recoverCollector()
 	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ReqTimeout)
 	defer cancel()
 
 	var metrics []vMetric
@@ -722,16 +912,15 @@ func HostHBAStatus(vc HostConfig) []vMetric {
 		log.Error(err)
 		return metrics
 	}
-
 	defer c.Logout(ctx)
 
 	m := view.NewManager(c.Client)
+	defer m.Destroy(ctx)
 
 	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"HostSystem"}, true)
 	if err != nil {
 		log.Error(err.Error())
 	}
-
 	defer v.Destroy(ctx)
 
 	var hosts []mo.HostSystem
@@ -793,7 +982,7 @@ func HostHBAStatus(vc HostConfig) []vMetric {
 func VmMetrics(vc HostConfig) []vMetric {
 	defer recoverCollector()
 	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ReqTimeout)
 	defer cancel()
 
 	var metrics []vMetric
@@ -805,16 +994,15 @@ func VmMetrics(vc HostConfig) []vMetric {
 		log.Error(err)
 		return metrics
 	}
-
 	defer c.Logout(ctx)
 
 	m := view.NewManager(c.Client)
+	defer m.Destroy(ctx)
 
 	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"VirtualMachine"}, true)
 	if err != nil {
 		log.Error(err.Error())
 	}
-
 	defer v.Destroy(ctx)
 
 	var vms []mo.VirtualMachine
@@ -860,138 +1048,6 @@ func VmMetrics(vc HostConfig) []vMetric {
 	return metrics
 }
 
-func VmPerfCounters(vc HostConfig) []vMetric {
-	defer recoverCollector()
-	log.SetReportCaller(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
-
-	var metrics []vMetric
-
-	c, err := NewClient(vc, ctx)
-	// With multi vcenter support, connection error should not be fatal anymore
-	if err != nil {
-		//log.Fatal(err)
-		log.Error(err)
-		return metrics
-	}
-
-	defer c.Logout(ctx)
-
-	m := view.NewManager(c.Client)
-
-	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"VirtualMachine"}, true)
-	if err != nil {
-		log.Error(err.Error())
-	}
-
-	defer v.Destroy(ctx)
-
-	vmsRefs, err := v.Find(ctx, []string{"VirtualMachine"}, nil)
-	if err != nil {
-		log.Error(err.Error())
-	}
-
-	// Create a PerfManager
-	perfManager := performance.NewManager(c.Client)
-
-	// Retrieve counters name list
-	cnt, err := perfManager.CounterInfoByName(ctx)
-	if err != nil {
-		log.Error(err.Error())
-		return metrics
-	}
-
-	// Filter wanted metrics
-	var names []string
-	for _, cn := range cfg.VmPerfCounters {
-		for name := range cnt {
-			if strings.EqualFold(cn.VName, name) {
-				names = append(names, name)
-			}
-		}
-	}
-
-	// Create PerfQuerySpec
-	spec := types.PerfQuerySpec{
-		MaxSample:  1,
-		MetricId:   []types.PerfMetricId{{Instance: "*"}},
-		IntervalId: 300,
-	}
-
-	// Query metrics
-	sample, err := perfManager.SampleByName(ctx, spec, names, vmsRefs)
-	if err != nil {
-		log.Error(err.Error())
-		return metrics
-	}
-
-	result, err := perfManager.ToMetricSeries(ctx, sample)
-	if err != nil {
-		log.Error(err.Error())
-		return metrics
-	}
-
-	// Read result
-	for _, metric := range result {
-		vm := object.NewVirtualMachine(c.Client, metric.Entity)
-		name, err := vm.ObjectName(ctx)
-		moref := string(metric.Entity.Value)
-		if err != nil {
-			log.Error(err.Error())
-			return metrics
-		}
-
-		// Get Host name
-		h, err := vm.HostSystem(ctx)
-		if err != nil {
-			log.Error(err.Error())
-			return nil
-		}
-		hr, err := HostSystemFromRef(c, h.Reference())
-		if err != nil {
-			if false == strings.EqualFold(err.Error(), "Not an *object.HostSystem") {
-				log.Error(err.Error())
-				return nil
-			}
-		}
-		host := hr.Name()
-		host = strings.ToLower(host)
-		// Get host parent reference
-		var hostparent mo.HostSystem
-		err = h.Properties(ctx, h.Reference(), []string{"parent"}, &hostparent)
-		if err != nil {
-			log.Error(err.Error())
-			return nil
-		}
-		
-		// Get name of cluster the host is part of
-		cls, err := ClusterFromRef(c, hostparent.Parent.Reference())
-		var cname string
-		if err != nil {
-			if false == strings.EqualFold(err.Error(), "Not an *object.ClusterComputeResource") {
-				log.Error(err.Error())
-				return nil
-			} else {
-				cname = "standalone"
-			}
-		} else {
-			cname = cls.Name()
-			cname = strings.ToLower(cname)
-		}
-
-		for _, v := range metric.Value {
-			for _, cn := range cfg.VmPerfCounters {
-				if strings.EqualFold(cn.VName, v.Name) {
-					metrics = append(metrics, vMetric{name: cn.PName, mtype: Gauge, help: cn.Help,
-						value: float64(v.Value[0]), labels: map[string]string{"vcenter": vc.Host, "cluster": cname, "host": host, "vmname": name, "moref": moref, "minstance": v.Instance}})
-				}
-			}
-		}
-	}
-
-	return metrics
-}
 
 func GetClusters(ctx context.Context, c *govmomi.Client, lst *[]mo.ClusterComputeResource) error {
 	defer recoverCollector()
@@ -1003,7 +1059,6 @@ func GetClusters(ctx context.Context, c *govmomi.Client, lst *[]mo.ClusterComput
 		log.Error(err.Error())
 		return err
 	}
-
 	defer v.Destroy(ctx)
 
 	err = v.Retrieve(ctx, []string{"ClusterComputeResource"}, []string{"name", "summary"}, lst)
@@ -1050,7 +1105,7 @@ func ClusterFromRef(client *govmomi.Client, ref types.ManagedObjectReference) (*
 	case *object.ClusterComputeResource:
 		return obj.(*object.ClusterComputeResource), nil
 	default:
-		log.Debugf("This is NOT *object.ClusterComputeResource: %T", obj)
+		//log.Debugf("This is NOT *object.ClusterComputeResource: %T", obj)
 		return nil, errors.New("Not an *object.ClusterComputeResource")
 	}
 
@@ -1073,7 +1128,7 @@ func HostSystemFromRef(client *govmomi.Client, ref types.ManagedObjectReference)
 	case *object.HostSystem:
 		return obj.(*object.HostSystem), nil
 	default:
-		log.Debugf("This is NOT *object.HostSystem: %T", obj)
+		//log.Debugf("This is NOT *object.HostSystem: %T", obj)
 		return nil, errors.New("Not an *object.HostSystem")
 	}
 
