@@ -18,7 +18,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	"fmt"
 )
 
 type MetricType int
@@ -409,7 +408,7 @@ func HostMetrics(vc HostConfig) []vMetric {
 	defer v.Destroy(ctx)
 
 	var hosts []mo.HostSystem
-	err = v.Retrieve(ctx, []string{"HostSystem"}, []string{"summary", "parent", "vm"}, &hosts)
+	err = v.Retrieve(ctx, []string{"HostSystem"}, []string{"summary", "runtime", "parent", "vm"}, &hosts)
 	if err != nil {
 		log.Error(err.Error())
 	}
@@ -458,7 +457,13 @@ func HostMetrics(vc HostConfig) []vMetric {
 			value: float64(freeMemory), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 		metrics = append(metrics, vMetric{name: "vsphere_host_mem_pusage", mtype: Gauge, help: "Hypervisors Memory Percent Usage",
 			value: float64(memPusage), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
-
+		if hs.Runtime.InMaintenanceMode == true {
+			metrics = append(metrics, vMetric{name: "vsphere_host_maintenance_mode", mtype: Gauge, help: "Hypervisor is in maintenance mode",
+				value: float64(1), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		} else {
+			metrics = append(metrics, vMetric{name: "vsphere_host_maintenance_mode", mtype: Gauge, help: "Hypervisor is in maintenance mode",
+				value: float64(0), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		}
 	}
 
 	return metrics
