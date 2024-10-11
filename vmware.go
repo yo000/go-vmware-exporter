@@ -536,8 +536,10 @@ func HostCounters(vc HostConfig) []vMetric {
 		}
 
 		poweredOn := len(vms)
+		// Fix doublons sur les VM on
+		vms = vms[:0]
 
-		err = vmView.Retrieve(ctx, []string{"VirtualMachine"}, []string{"name", "summary.config", "runtime.powerState"}, &vms)
+		err = vmView.Retrieve(ctx, []string{"VirtualMachine"}, []string{"name", "summary.config"}, &vms)
 		if err != nil {
 			log.Error(err.Error() + " : " + "in retrieving vms")
 		}

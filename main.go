@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"flag"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -48,7 +49,13 @@ var (
 func main() {
 	port := flag.Int("port", 9094, "Port to attach exporter")
 	cfgFile = flag.String("config", "config.yaml", "config file")
+	showVersion := flag.Bool("version", false, "Show version and exit")
 	flag.Parse()
+
+	if *showVersion == true {
+		fmt.Printf("go-vmware-exporter v%s\n", xver)
+		return
+	}
 
 	loadConfig()
 
