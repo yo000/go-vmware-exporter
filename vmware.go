@@ -16,6 +16,7 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 	"math"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"time"
 )
@@ -61,7 +62,8 @@ main.HostCounters({{0xc0000cc3a8, 0x18}, {0xc0000a74d4, 0xb}, {0xc0000cc3c0, 0x1
 */
 func recoverCollector() {
 	if r := recover(); r != nil {
-		log.Errorf("recovered from %v\n", r)
+		log.Errorf("recovered from %v", r)
+		log.Errorf("Stack trace: %s", string(debug.Stack()))
 	}
 }
 
@@ -533,7 +535,7 @@ func HostCounters(vc HostConfig) []vMetric {
 		err2 := vmView.RetrieveWithFilter(ctx, []string{"VirtualMachine"}, []string{"name", "runtime"}, &vms, property.Filter{"runtime.powerState": "poweredOn"})
 		if err2 != nil {
 			// No result is not an error
-			if !strings.Contains(err.Error(), "object references is empty") {
+			if !strings.Contains(err2.Error(), "object references is empty") {
 				log.Error(err2.Error() +": HostCounters - poweron")
 			}
 		}
@@ -550,7 +552,7 @@ func HostCounters(vc HostConfig) []vMetric {
 		templates := len(vms)
 
 		vms = vms[:0]
-		err = vmView.Retrieve(ctx, []string{"VirtualMachine"}, []string{"name", "summary.config"}, &vms)
+		err = vmView.Retrieve(ctx, []string{"VirtualMachine"}, []string{"name", "summary.config", "runtime.powerState"}, &vms)
 		if err != nil {
 			log.Error(err.Error() + " : " + "in retrieving vms")
 		}
