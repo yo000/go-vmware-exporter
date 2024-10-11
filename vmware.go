@@ -532,13 +532,24 @@ func HostCounters(vc HostConfig) []vMetric {
 
 		err2 := vmView.RetrieveWithFilter(ctx, []string{"VirtualMachine"}, []string{"name", "runtime"}, &vms, property.Filter{"runtime.powerState": "poweredOn"})
 		if err2 != nil {
-			//	log.Error(err2.Error() +": HostCounters - poweron")
+			// No result is not an error
+			if !strings.Contains(err.Error(), "object references is empty") {
+				log.Error(err2.Error() +": HostCounters - poweron")
+			}
 		}
-
 		poweredOn := len(vms)
-		// Fix doublons sur les VM on
-		vms = vms[:0]
 
+		vms = vms[:0]
+		err = vmView.RetrieveWithFilter(ctx, []string{"VirtualMachine"}, []string{"name", "summary"}, &vms, property.Filter{"summary.config.template": "true"})
+		if err != nil {
+			// No result is not an error
+			if !strings.Contains(err.Error(), "object references is empty") {
+				log.Error(err.Error() +": HostCounters - templates")
+			}
+		}
+		templates := len(vms)
+
+		vms = vms[:0]
 		err = vmView.Retrieve(ctx, []string{"VirtualMachine"}, []string{"name", "summary.config"}, &vms)
 		if err != nil {
 			log.Error(err.Error() + " : " + "in retrieving vms")
@@ -550,6 +561,8 @@ func HostCounters(vc HostConfig) []vMetric {
 			value: float64(poweredOn), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 		metrics = append(metrics, vMetric{name: "vsphere_host_vm_total", mtype: Gauge, help: "Number of vms registered on host",
 			value: float64(total), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
+		metrics = append(metrics, vMetric{name: "vsphere_host_vm_template_total", mtype: Gauge, help: "Number of vms registered on host as template",
+			value: float64(templates), labels: map[string]string{"vcenter": vcname, "host": name, "cluster": cname}})
 
 		var vMem int64
 		var vCPU int64
